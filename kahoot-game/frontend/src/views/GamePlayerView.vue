@@ -393,10 +393,24 @@ const unwatchGameState = gameStore.$subscribe((mutation, state) => {
     }
   } else if (state.gameState === 'show_result') {
     showResult.value = true
+    updateScoreGained()
   } else if (state.gameState === 'finished') {
     router.push(`/results/${roomId.value}`)
   }
 })
+
+// 更新分數顯示
+const updateScoreGained = () => {
+  // 從最新的分數陣列中找到當前玩家的得分
+  const currentPlayerId = gameStore.currentPlayer?.id
+  if (currentPlayerId && gameStore.scores.length > 0) {
+    const playerScore = gameStore.scores.find(score => score.playerId === currentPlayerId)
+    if (playerScore && playerScore.scoreGained !== undefined) {
+      scoreGained.value = playerScore.scoreGained
+      console.log(`💰 更新得分顯示: ${scoreGained.value} 分`)
+    }
+  }
+}
 
 // 生命週期
 onMounted(() => {

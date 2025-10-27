@@ -30,6 +30,7 @@ type Room struct {
 	TimeLeft          int               `json:"timeLeft"`
 	Questions         []Question        `json:"questions"`
 	Answers           map[string]*Answer `json:"answers"`           // 當前題目的玩家答案
+	GameHistory       []QuestionHistory `json:"gameHistory"`       // 所有題目的答題記錄
 	CreatedAt         time.Time         `json:"createdAt"`
 	StartedAt         *time.Time        `json:"startedAt,omitempty"`
 	FinishedAt        *time.Time        `json:"finishedAt,omitempty"`
@@ -118,6 +119,28 @@ type ScoreInfo struct {
 	Score       int    `json:"score"`
 	Rank        int    `json:"rank"`
 	ScoreGained int    `json:"scoreGained"`
+}
+
+// QuestionHistory 題目歷史記錄
+type QuestionHistory struct {
+	QuestionID   int                    `json:"questionId"`
+	QuestionNum  int                    `json:"questionNum"`
+	HostPlayerID string                 `json:"hostPlayerId"`
+	HostAnswer   string                 `json:"hostAnswer"`
+	PlayerAnswers map[string]*Answer    `json:"playerAnswers"`
+}
+
+// PlayerGameStats 玩家遊戲統計
+type PlayerGameStats struct {
+	PlayerID        string  `json:"playerId"`
+	PlayerName      string  `json:"playerName"`
+	TotalScore      int     `json:"totalScore"`
+	Rank            int     `json:"rank"`
+	TotalQuestions  int     `json:"totalQuestions"`
+	AsHost          int     `json:"asHost"`          // 當主角次數
+	AsGuesser       int     `json:"asGuesser"`       // 當猜測者次數
+	CorrectGuesses  int     `json:"correctGuesses"`  // 猜對次數 (只計算猜測部分)
+	GuessAccuracy   float64 `json:"guessAccuracy"`   // 猜測正確率 (只計算猜測部分)
 }
 
 // QuestionResult 題目結果

@@ -463,8 +463,19 @@ export const useSocketStore = defineStore('socket', () => {
   }
 
   const handleScoresUpdate = (data: any) => {
+    console.log('📊 === 前端收到分數更新事件 ===')
+    console.log('🎯 主角答案:', data.hostAnswer)
+    console.log('📈 所有玩家分數詳情:')
+    
     const totalPlayers = Object.keys(gameStore.currentRoom?.players || {}).length
     const recordedScores = data.scores ? data.scores.length : 0
+
+    data.scores?.forEach((score: any, index: number) => {
+      console.log(`   ${index + 1}. ${score.playerName} (ID: ${score.playerId})`)
+      console.log(`      ├─ 總分: ${score.score}`)
+      console.log(`      ├─ 本題得分: ${score.scoreGained}`)
+      console.log(`      └─ 排名: 第${score.rank}名`)
+    })
 
     logInfo('SCORE', '分數更新', {
       totalPlayers,
@@ -488,11 +499,17 @@ export const useSocketStore = defineStore('socket', () => {
     const currentPlayerScore = data.scores.find((s: any) => s.playerId === gameStore.currentPlayer?.id)
     if (currentPlayerScore) {
       const scoreGained = currentPlayerScore.scoreGained || 0
+      console.log(`💰 當前玩家 ${gameStore.currentPlayer?.name} 本題得分: ${scoreGained}`)
+      
       if (scoreGained > 0) {
         uiStore.showSuccess(`獲得 ${scoreGained} 分！`)
       } else {
         uiStore.showInfo('這次沒有得分，下次加油！')
       }
+    } else {
+      console.log('⚠️ 找不到當前玩家的分數記錄')
+      console.log('當前玩家ID:', gameStore.currentPlayer?.id)
+      console.log('分數列表中的玩家IDs:', data.scores?.map((s: any) => s.playerId))
     }
     
     // 顯示主角答案
@@ -501,20 +518,40 @@ export const useSocketStore = defineStore('socket', () => {
         uiStore.showInfo(`主角選擇了：${data.hostAnswer}`)
       }, 1000)
     }
+    
+    console.log('📊 === 前端分數更新處理完成 ===')
   }
 
   const handleGameFinished = (data: any) => {
+    console.log('🏁 === 前端收到遊戲結束事件 ===')
+    console.log('📊 最終統計數據:', data.finalStats)
+    console.log('🎮 總題數:', data.totalQuestions)
+    
+    // 轉換新的統計格式為舊的分數格式 (為了兼容現有前端)
+    const finalRanking = data.finalStats?.map((stats: any) => ({
+      playerId: stats.playerId,
+      playerName: stats.playerName,
+      score: stats.totalScore,
+      rank: stats.rank,
+      correctAnswers: stats.correctGuesses,  // 只計算猜測正確次數
+      accuracy: Math.round(stats.guessAccuracy), // 猜測正確率
+      timesAsHost: stats.asHost,
+      timesAsGuesser: stats.asGuesser
+    })) || []
+
     logInfo('GAME', '遊戲結束', {
-      winner: data.winner,
-      finalRankingCount: data.finalRanking?.length ?? 0
+      finalStatsCount: data.finalStats?.length ?? 0,
+      totalQuestions: data.totalQuestions
     })
 
     gameStore.setGameState('finished')
-    gameStore.updateScores(data.finalRanking)
+    gameStore.updateScores(finalRanking)
     
     // 顯示遊戲結束信息
-    const winnerName = data.winner?.playerName || data.finalRanking?.[0]?.playerName || '未知'
+    const winnerName = finalRanking[0]?.playerName || '未知'
     uiStore.showSuccess(`遊戲結束！恭喜 ${winnerName} 獲勝！`)
+    
+    console.log('🏁 === 前端遊戲結束處理完成 ===')
     
     // 不自動清理，等待用戶操作
     logDebug('GAME', '等待玩家操作清理')

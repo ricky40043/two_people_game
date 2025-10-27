@@ -3,6 +3,7 @@ package services
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"math/rand"
 	"time"
 
@@ -213,13 +214,22 @@ func (s *GameService) SubmitTwoTypesAnswer(room *models.Room, playerID, answer s
 
 // CalculateTwoTypesScores 計算「2種人」遊戲分數
 func (s *GameService) CalculateTwoTypesScores(room *models.Room, answers map[string]*models.Answer) []models.ScoreInfo {
+	log.Printf("🔢 === 開始計算第 %d 題分數 ===", room.CurrentQuestion)
+	log.Printf("🎯 當前主角: %s", room.CurrentHost)
+	log.Printf("📊 收到答案數量: %d", len(answers))
+	
 	// 找到主角的答案
 	var hostAnswer string
 	for playerID, answer := range answers {
 		if playerID == room.CurrentHost {
 			hostAnswer = answer.Answer
+			log.Printf("👑 主角答案: %s (玩家ID: %s)", hostAnswer, playerID)
 			break
 		}
+	}
+	
+	if hostAnswer == "" {
+		log.Printf("⚠️ 警告: 沒有找到主角答案!")
 	}
 	
 	scores := make([]models.ScoreInfo, 0, len(room.Players))
@@ -228,24 +238,45 @@ func (s *GameService) CalculateTwoTypesScores(room *models.Room, answers map[str
 		answer, hasAnswered := answers[playerID]
 		scoreGained := 0
 		
+		log.Printf("👤 計算玩家分數: %s (ID: %s)", player.Name, playerID)
+		log.Printf("   ├─ 是否答題: %t", hasAnswered)
+		if hasAnswered {
+			log.Printf("   ├─ 玩家答案: %s", answer.Answer)
+			log.Printf("   ├─ 答題時間: %.2f秒", answer.ResponseTime)
+		}
+		
 		if hasAnswered {
 			if playerID == room.CurrentHost {
 				// 主角得分邏輯：有答題就得基礎分
 				scoreGained = 50
+				log.Printf("   ├─ 主角基礎分: %d", scoreGained)
 			} else if answer.Answer == hostAnswer {
 				// 其他玩家：猜對主角答案得分，越快越高分
 				baseScore := 100
-				timeBonus := int((float64(room.QuestionTimeLimit) - answer.ResponseTime) * 2)
+				
+				// 計算速度獎勵：最多 50 分
+				timeBonus := int((float64(room.QuestionTimeLimit) - answer.ResponseTime) * 1.5)
 				if timeBonus < 0 {
 					timeBonus = 0
 				}
+				if timeBonus > 50 {
+					timeBonus = 50 // 限制速度獎勵最高 50 分
+				}
+				
 				scoreGained = baseScore + timeBonus
+				log.Printf("   ├─ 猜對主角! 基礎分: %d, 速度獎勵: %d, 總得分: %d", baseScore, timeBonus, scoreGained)
+			} else {
+				log.Printf("   ├─ 猜錯主角 (答案: %s, 主角答案: %s), 得分: 0", answer.Answer, hostAnswer)
 			}
 			// 如果猜錯主角答案，得0分
+		} else {
+			log.Printf("   ├─ 未答題，得分: 0")
 		}
 		
 		// 更新玩家總分
+		oldScore := player.Score
 		player.Score += scoreGained
+		log.Printf("   └─ 分數更新: %d + %d = %d", oldScore, scoreGained, player.Score)
 		
 		scores = append(scores, models.ScoreInfo{
 			PlayerID:    playerID,
@@ -263,6 +294,11 @@ func (s *GameService) CalculateTwoTypesScores(room *models.Room, answers map[str
 		}
 	}
 	
+	log.Printf("📊 排序前的分數:")
+	for i, score := range scores {
+		log.Printf("   %d. %s: %d分 (本題+%d)", i+1, score.PlayerName, score.Score, score.ScoreGained)
+	}
+	
 	// 按總分排序
 	for i := 0; i < len(scores); i++ {
 		for j := i + 1; j < len(scores); j++ {
@@ -276,6 +312,12 @@ func (s *GameService) CalculateTwoTypesScores(room *models.Room, answers map[str
 	for i := range scores {
 		scores[i].Rank = i + 1
 	}
+	
+	log.Printf("🏆 排序後的排名:")
+	for _, score := range scores {
+		log.Printf("   第%d名: %s - %d分 (本題+%d)", score.Rank, score.PlayerName, score.Score, score.ScoreGained)
+	}
+	log.Printf("🔢 === 第 %d 題分數計算完成 ===", room.CurrentQuestion)
 	
 	return scores
 }
@@ -297,6 +339,105 @@ func (s *GameService) NextTwoTypesQuestion(room *models.Room) {
 }
 
 // GetFinalRanking 獲取最終排名
-func (s *GameService) GetFinalRanking(room *models.Room) []models.ScoreInfo {
-	return room.GetSortedPlayersByScore()
+func (s *GameService) GetFinalRanking(room *models.Room) []models.PlayerGameStats {
+	log.Printf("🏁 === 遊戲結束 - 最終結算 ===")
+	log.Printf("🎮 房間ID: %s", room.ID)
+	log.Printf("📝 總題數: %d", room.TotalQuestions)
+	log.Printf("👥 參與玩家數: %d", len(room.Players))
+	log.Printf("📚 遊戲歷史記錄數: %d", len(room.GameHistory))
+	
+	// 計算每個玩家的詳細統計
+	playerStats := s.calculatePlayerGameStats(room)
+	
+	log.Printf("🏆 最終排名與統計:")
+	for i, stats := range playerStats {
+		log.Printf("   第%d名: %s - %d分", i+1, stats.PlayerName, stats.TotalScore)
+		log.Printf("      ├─ 當主角: %d次", stats.AsHost)
+		log.Printf("      ├─ 當猜測者: %d次", stats.AsGuesser)
+		log.Printf("      ├─ 猜對次數: %d次", stats.CorrectGuesses)
+		log.Printf("      └─ 猜測正確率: %.1f%%", stats.GuessAccuracy)
+	}
+	
+	log.Printf("🏁 === 最終結算完成 ===")
+	return playerStats
+}
+
+// calculatePlayerGameStats 計算玩家遊戲統計
+func (s *GameService) calculatePlayerGameStats(room *models.Room) []models.PlayerGameStats {
+	statsMap := make(map[string]*models.PlayerGameStats)
+	
+	// 初始化每個玩家的統計
+	for playerID, player := range room.Players {
+		statsMap[playerID] = &models.PlayerGameStats{
+			PlayerID:       playerID,
+			PlayerName:     player.Name,
+			TotalScore:     player.Score,
+			TotalQuestions: room.TotalQuestions,
+			AsHost:         0,
+			AsGuesser:      0,
+			CorrectGuesses: 0,
+			GuessAccuracy:  0.0,
+		}
+	}
+	
+	// 分析每題的歷史記錄
+	for _, history := range room.GameHistory {
+		log.Printf("📊 分析第%d題統計:", history.QuestionNum)
+		log.Printf("   主角: %s, 主角答案: %s", history.HostPlayerID, history.HostAnswer)
+		
+		for playerID, answer := range history.PlayerAnswers {
+			if stats, exists := statsMap[playerID]; exists {
+				if answer.WasHost {
+					// 當主角
+					stats.AsHost++
+					log.Printf("   玩家 %s: 當主角", stats.PlayerName)
+				} else {
+					// 當猜測者
+					stats.AsGuesser++
+					if answer.IsCorrect {
+						stats.CorrectGuesses++
+						log.Printf("   玩家 %s: 猜對 (答案:%s)", stats.PlayerName, answer.Answer)
+					} else {
+						log.Printf("   玩家 %s: 猜錯 (答案:%s, 主角答案:%s)", stats.PlayerName, answer.Answer, history.HostAnswer)
+					}
+				}
+			}
+		}
+	}
+	
+	// 計算猜測正確率並轉換為數組
+	result := make([]models.PlayerGameStats, 0, len(statsMap))
+	for _, stats := range statsMap {
+		// 計算猜測正確率 (只計算猜測部分，不包括當主角)
+		if stats.AsGuesser > 0 {
+			stats.GuessAccuracy = float64(stats.CorrectGuesses) / float64(stats.AsGuesser) * 100
+		} else {
+			stats.GuessAccuracy = 0.0
+		}
+		
+		log.Printf("🔢 玩家 %s 最終統計:", stats.PlayerName)
+		log.Printf("   ├─ 總分: %d", stats.TotalScore)
+		log.Printf("   ├─ 當主角: %d/%d", stats.AsHost, stats.TotalQuestions)
+		log.Printf("   ├─ 當猜測者: %d/%d", stats.AsGuesser, stats.TotalQuestions)
+		log.Printf("   ├─ 猜對次數: %d/%d", stats.CorrectGuesses, stats.AsGuesser)
+		log.Printf("   └─ 猜測正確率: %.1f%%", stats.GuessAccuracy)
+		
+		result = append(result, *stats)
+	}
+	
+	// 按總分排序
+	for i := 0; i < len(result); i++ {
+		for j := i + 1; j < len(result); j++ {
+			if result[j].TotalScore > result[i].TotalScore {
+				result[i], result[j] = result[j], result[i]
+			}
+		}
+	}
+	
+	// 設置排名
+	for i := range result {
+		result[i].Rank = i + 1
+	}
+	
+	return result
 }

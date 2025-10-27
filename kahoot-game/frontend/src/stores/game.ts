@@ -111,7 +111,14 @@ export const useGameStore = defineStore('game', () => {
   }
 
   const updateScores = (newScores: ScoreInfo[]) => {
-    scores.value = newScores
+    // 確保 newScores 是一個有效的數組
+    if (Array.isArray(newScores)) {
+      scores.value = newScores
+      console.log('✅ 更新分數數組:', newScores.length, '個玩家')
+    } else {
+      console.error('❌ updateScores 接收到無效的數組:', newScores)
+      scores.value = [] // 設置為空數組避免錯誤
+    }
   }
 
   const updateTimeLeft = (time: number) => {

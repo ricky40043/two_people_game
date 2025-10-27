@@ -613,14 +613,15 @@ func (c *Client) handleNextQuestion() {
 	
 	// 檢查遊戲是否結束
 	if room.Status == models.RoomStatusFinished {
-		// 遊戲結束，發送最終結果
-		finalResults := c.hub.gameService.GetFinalRanking(room)
+		// 遊戲結束，發送最終結果 (包含詳細統計)
+		finalStats := c.hub.gameService.GetFinalRanking(room)
 		
 		gameEndMsg := Message{
 			Type: "GAME_FINISHED",
 			Data: map[string]interface{}{
-				"finalRanking": finalResults,
-				"message":      "遊戲結束！",
+				"finalStats":     finalStats,
+				"message":        "遊戲結束！",
+				"totalQuestions": room.TotalQuestions,
 			},
 		}
 		
@@ -628,7 +629,7 @@ func (c *Client) handleNextQuestion() {
 			c.hub.BroadcastToRoom(c.RoomID, msgBytes)
 		}
 		
-		log.Printf("🏁 房間 %s 遊戲結束", c.RoomID)
+		log.Printf("🏁 房間 %s 遊戲結束，發送詳細統計給所有玩家", c.RoomID)
 	} else {
 		// 檢查是否還有題目可以發送
 		if room.CurrentQuestion <= len(room.Questions) {
@@ -833,6 +834,9 @@ func (c *Client) calculateAndShowResults(room *models.Room) {
 		c.hub.BroadcastToRoom(c.RoomID, msgBytes)
 	}
 	
+	// 記錄題目歷史
+	c.recordQuestionHistory(room)
+	
 	// 延遲5秒後自動進入下一題，讓玩家有時間查看分數
 	go func() {
 		time.Sleep(5 * time.Second)
@@ -858,6 +862,56 @@ func (c *Client) calculateAndShowResults(room *models.Room) {
 	}()
 	
 	log.Printf("📊 房間 %s 第 %d 題計分完成，5秒後自動下一題", c.RoomID, room.CurrentQuestion)
+}
+
+// recordQuestionHistory 記錄題目歷史
+func (c *Client) recordQuestionHistory(room *models.Room) {
+	if room.Answers == nil || len(room.Answers) == 0 {
+		log.Printf("⚠️ 沒有答案記錄，跳過歷史記錄")
+		return
+	}
+	
+	// 找到主角答案
+	hostAnswer := ""
+	for playerID, answer := range room.Answers {
+		if playerID == room.CurrentHost {
+			hostAnswer = answer.Answer
+			break
+		}
+	}
+	
+	// 創建題目歷史記錄
+	history := models.QuestionHistory{
+		QuestionID:    room.Questions[room.CurrentQuestion-1].ID,
+		QuestionNum:   room.CurrentQuestion,
+		HostPlayerID:  room.CurrentHost,
+		HostAnswer:    hostAnswer,
+		PlayerAnswers: make(map[string]*models.Answer),
+	}
+	
+	// 複製所有玩家答案
+	for playerID, answer := range room.Answers {
+		history.PlayerAnswers[playerID] = &models.Answer{
+			PlayerID:     answer.PlayerID,
+			QuestionID:   answer.QuestionID,
+			Answer:       answer.Answer,
+			IsCorrect:    answer.IsCorrect,
+			ResponseTime: answer.ResponseTime,
+			ScoreGained:  answer.ScoreGained,
+			WasHost:      answer.WasHost,
+			HostAnswer:   hostAnswer,
+			SubmittedAt:  answer.SubmittedAt,
+		}
+	}
+	
+	// 添加到房間歷史
+	if room.GameHistory == nil {
+		room.GameHistory = make([]models.QuestionHistory, 0)
+	}
+	room.GameHistory = append(room.GameHistory, history)
+	
+	log.Printf("📝 記錄第 %d 題歷史: 主角=%s, 答案=%s, 玩家答案數=%d", 
+		room.CurrentQuestion, room.CurrentHost, hostAnswer, len(history.PlayerAnswers))
 }
 
 // getHostAnswer 獲取主角答案

@@ -228,21 +228,28 @@ const myStats = computed(() => {
   
   if (!myRanking) return null
   
+  console.log('📊 我的統計數據:', myRanking)
+  
   return {
     rank: myRanking.rank,
     score: myRanking.score,
-    correctAnswers: Math.floor(Math.random() * gameStore.totalQuestions), // TODO: 實際計算
-    accuracy: Math.round((Math.floor(Math.random() * gameStore.totalQuestions) / gameStore.totalQuestions) * 100),
-    timesAsHost: Math.floor(Math.random() * 3), // TODO: 實際計算
+    correctAnswers: myRanking.correctAnswers || 0,
+    accuracy: myRanking.accuracy || 0,
+    timesAsHost: myRanking.timesAsHost || 0,
   }
 })
 
 const averageAccuracy = computed(() => {
   if (finalRanking.value.length === 0) return 0
-  const totalCorrect = finalRanking.value.reduce((sum, player) => {
-    return sum + (Math.floor(Math.random() * gameStore.totalQuestions)) // TODO: 實際計算
+  
+  const totalAccuracy = finalRanking.value.reduce((sum, player) => {
+    return sum + (player.accuracy || 0)
   }, 0)
-  return Math.round((totalCorrect / (finalRanking.value.length * gameStore.totalQuestions)) * 100)
+  
+  const avgAccuracy = Math.round(totalAccuracy / finalRanking.value.length)
+  console.log('📊 平均正確率計算:', totalAccuracy, '/', finalRanking.value.length, '=', avgAccuracy)
+  
+  return avgAccuracy
 })
 
 const gameDuration = computed(() => {
