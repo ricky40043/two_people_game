@@ -114,6 +114,12 @@ export const useSocketStore = defineStore('socket', () => {
       case 'QUESTION_TIMEOUT':
         handleQuestionTimeout(message.data)
         break
+      case 'QUESTION_INVALID':
+        handleQuestionInvalid(message.data)
+        break
+      case 'QUESTION_SKIPPED':
+        handleQuestionSkipped(message.data)
+        break
       case 'ANSWER_SUBMITTED':
         handleAnswerSubmitted(message.data)
         break
@@ -450,6 +456,22 @@ export const useSocketStore = defineStore('socket', () => {
     logInfo('QUESTION', '答題時間結束', data)
     gameStore.updateTimeLeft(0)
     uiStore.showWarning('時間到！')
+  }
+
+  const handleQuestionInvalid = (data: any) => {
+    console.log('❌ 題目無效:', data)
+    uiStore.showError(data.message || '主角未答題，本題無效')
+    
+    // 設置遊戲狀態為顯示結果（但不計分）
+    gameStore.setGameState('show_result')
+  }
+
+  const handleQuestionSkipped = (data: any) => {
+    console.log('⏭️ 題目跳過:', data)
+    uiStore.showInfo(data.message || '沒有玩家答題，跳過本題')
+    
+    // 直接進入下一題準備狀態
+    gameStore.setGameState('playing')
   }
 
   const handleAnswerSubmitted = (data: any) => {

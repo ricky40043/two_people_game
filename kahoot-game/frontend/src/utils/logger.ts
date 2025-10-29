@@ -19,10 +19,19 @@ declare global {
 }
 
 const FALLBACK_LOGGER: DebugLogger = {
-  info: (category, message, data) => console.info(`[${category}] ${message}`, data ?? ''),
+  info: (category, message, data) => {
+    // 只顯示重要的信息，隱藏過多的調試信息
+    const importantCategories = ['GAME', 'ERROR', 'WS'];
+    if (importantCategories.includes(category) || category.includes('ERROR')) {
+      console.info(`[${category}] ${message}`, data ?? '');
+    }
+  },
   warn: (category, message, data) => console.warn(`[${category}] ${message}`, data ?? ''),
   error: (category, message, data) => console.error(`[${category}] ${message}`, data ?? ''),
-  debug: (category, message, data) => console.debug(`[${category}] ${message}`, data ?? '')
+  debug: (category, message, data) => {
+    // 完全隱藏 DEBUG 級別的日誌
+    // console.debug(`[${category}] ${message}`, data ?? '')
+  }
 }
 
 function getLogger(): DebugLogger {

@@ -505,10 +505,7 @@ func (c *Client) startQuestionTimer(timeLimit int) {
 		return
 	}
 	
-	// 只允許主持人啟動計時器，避免重複計時器
-	if !c.IsHost {
-		return
-	}
+	log.Printf("⏰ 計時器啟動: 觸發者=%s, 是否主持人=%t, 房間=%s, 題目=%d", c.PlayerName, c.IsHost, c.RoomID, room.CurrentQuestion)
 	
 	// 設置計時器標識，防止重複啟動
 	timerKey := fmt.Sprintf("timer_%s_%d", c.RoomID, room.CurrentQuestion)
@@ -574,15 +571,66 @@ func (c *Client) handleQuestionTimeout() {
 	
 	log.Printf("⏰ 房間 %s 第 %d 題答題時間結束", c.RoomID, room.CurrentQuestion)
 	
-	// 不論是否有人答題，時間結束後都要處理結果和進入下一題
-	// 如果有人答題，計算分數；如果沒人答題，直接進入下一題
-	if room.Answers != nil && len(room.Answers) > 0 {
-		// 有人答題，計算分數並顯示結果
-		log.Printf("📊 時間結束，有 %d 個玩家已答題，開始計算分數", len(room.Answers))
+	// 檢查倒數結束時的答題情況
+	totalPlayers := room.GetPlayerCount()
+	answeredPlayers := 0
+	hostAnswered := false
+	
+	if room.Answers != nil {
+		answeredPlayers = len(room.Answers)
+		// 檢查主角是否已答題
+		if _, exists := room.Answers[room.CurrentHost]; exists {
+			hostAnswered = true
+		}
+	}
+	
+	log.Printf("⏰ 時間結束統計: 總玩家=%d, 已答題=%d, 主角已答題=%t", totalPlayers, answeredPlayers, hostAnswered)
+	
+	if answeredPlayers > 0 && hostAnswered {
+		// 主角已答題，可以進行正常計分
+		log.Printf("📊 主角已答題，開始計算分數")
 		c.calculateAndShowResults(room)
+	} else if answeredPlayers > 0 && !hostAnswered {
+		// 有人答題但主角沒答題，這題無效
+		log.Printf("⚠️ 主角未答題，本題無效，3秒後進入下一題")
+		
+		// 廣播主角未答題訊息
+		invalidMsg := Message{
+			Type: "QUESTION_INVALID",
+			Data: map[string]interface{}{
+				"message": "主角未在時間內答題，本題無效",
+				"reason":  "host_no_answer",
+			},
+		}
+		
+		if msgBytes, err := json.Marshal(invalidMsg); err == nil {
+			c.hub.BroadcastToRoom(c.RoomID, msgBytes)
+		}
+		
+		go func() {
+			time.Sleep(3 * time.Second)
+			// 清除答案記錄
+			room.Answers = make(map[string]*models.Answer)
+			c.hub.roomService.UpdateRoom(room)
+			c.handleNextQuestion()
+		}()
 	} else {
-		// 沒人答題，延遲3秒後直接進入下一題
-		log.Printf("📊 時間結束，沒有玩家答題，3秒後進入下一題")
+		// 沒人答題，直接進入下一題
+		log.Printf("📊 沒有玩家答題，3秒後進入下一題")
+		
+		// 廣播沒人答題訊息
+		noAnswerMsg := Message{
+			Type: "QUESTION_SKIPPED",
+			Data: map[string]interface{}{
+				"message": "時間到，沒有玩家答題",
+				"reason":  "no_answers",
+			},
+		}
+		
+		if msgBytes, err := json.Marshal(noAnswerMsg); err == nil {
+			c.hub.BroadcastToRoom(c.RoomID, msgBytes)
+		}
+		
 		go func() {
 			time.Sleep(3 * time.Second)
 			c.handleNextQuestion()
@@ -706,10 +754,9 @@ func (c *Client) sendNextQuestion() {
 
 	log.Printf("📝 房間 %s 發送第 %d 題，主角: %s", c.RoomID, room.CurrentQuestion, room.CurrentHost)
 	
-	// 只有主持人啟動計時器，避免重複
-	if c.IsHost {
-		go c.startQuestionTimer(room.QuestionTimeLimit)
-	}
+	// 啟動計時器（移除主持人限制，因為任何客戶端都可能觸發下一題）
+	log.Printf("⏰ 啟動第 %d 題計時器 (觸發者: %s)", room.CurrentQuestion, c.PlayerName)
+	go c.startQuestionTimer(room.QuestionTimeLimit)
 }
 
 // handleSubmitAnswer 處理提交答案

@@ -173,21 +173,21 @@ style.textContent = `
 document.head.appendChild(style)
 
 // 在頁面載入後添加日誌顯示區域
-document.addEventListener('DOMContentLoaded', () => {
-  const container = document.createElement('div')
-  container.id = 'debug-log-container'
-  container.innerHTML = `
-    <div id="debug-log-header">
-      <span>Debug Log</span>
-      <div class="debug-controls">
-        <button onclick="window.debugLogger.clear()">Clear</button>
-        <button onclick="window.debugLogger.exportLogs()">Export</button>
-        <button onclick="document.getElementById('debug-log-container').style.display='none'">Hide</button>
-      </div>
-    </div>
-    <div id="debug-log-display"></div>
-  `
-  document.body.appendChild(container)
-})
+// document.addEventListener('DOMContentLoaded', () => {
+//   const container = document.createElement('div')
+//   container.id = 'debug-log-container'
+//   container.innerHTML = `
+//     <div id="debug-log-header">
+//       <span>Debug Log</span>
+//       <div class="debug-controls">
+//         <button onclick="window.debugLogger.clear()">Clear</button>
+//         <button onclick="window.debugLogger.exportLogs()">Export</button>
+//         <button onclick="document.getElementById('debug-log-container').style.display='none'">Hide</button>
+//       </div>
+//     </div>
+//     <div id="debug-log-display"></div>
+//   `
+//   document.body.appendChild(container)
+// })
 
 console.log('Debug Logger initialized')
