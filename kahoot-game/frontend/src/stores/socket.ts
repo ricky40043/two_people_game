@@ -123,6 +123,9 @@ export const useSocketStore = defineStore('socket', () => {
       case 'ANSWER_SUBMITTED':
         handleAnswerSubmitted(message.data)
         break
+      case 'PLAYER_ANSWERED':
+        handlePlayerAnswered(message.data)
+        break
       case 'QUESTION_FINISHED':
         handleQuestionFinished(message.data)
         break
@@ -365,6 +368,9 @@ export const useSocketStore = defineStore('socket', () => {
 
       const questionIndex = data.questionIndex !== undefined ? data.questionIndex : (data.currentQuestion - 1)
 
+      // 重置上一題的答案狀態，避免統計沿用舊資料
+      gameStore.resetPlayerAnswerStatus()
+
       logDebug('QUESTION', '更新題目索引', {
         beforeIndex: gameStore.currentQuestionIndex,
         afterIndex: questionIndex,
@@ -475,8 +481,49 @@ export const useSocketStore = defineStore('socket', () => {
   }
 
   const handleAnswerSubmitted = (data: any) => {
+    console.log('📝 收到答案提交確認:', data)
+    
+    // 更新玩家的答案狀態
+    const player = gameStore.getPlayerById(data.playerId)
+    if (player) {
+      gameStore.updatePlayerAnswerStatus(data.playerId, {
+        hasAnswered: true,
+        answer: data.answer,
+        isHost: data.isHost
+      })
+      
+      console.log(`✅ 已更新玩家 ${data.playerName} 的答案: ${data.answer}`)
+    } else {
+      console.error('❌ 找不到玩家:', data.playerId)
+    }
+    
     logDebug('QUESTION', '答案已提交', data)
     uiStore.showSuccess('答案已提交！')
+  }
+
+  const handlePlayerAnswered = (data: any) => {
+    console.log('👥 收到玩家答題通知:', data)
+    
+    // 更新玩家的答題狀態
+    const player = gameStore.getPlayerById(data.playerId)
+    if (player) {
+      const updateData: any = {
+        hasAnswered: true,
+        isHost: data.isHost
+      }
+      
+      // 如果訊息包含答案（主持人能收到），則更新答案
+      if (data.answer) {
+        updateData.answer = data.answer
+        console.log(`👤 玩家 ${data.playerName} 已答題: ${data.answer} (主持人可見)`)
+      } else {
+        console.log(`👤 玩家 ${data.playerName} 已答題 (不可見答案)`)
+      }
+      
+      gameStore.updatePlayerAnswerStatus(data.playerId, updateData)
+    } else {
+      console.error('❌ 找不到玩家:', data.playerId)
+    }
   }
 
   const handleQuestionFinished = (data: any) => {

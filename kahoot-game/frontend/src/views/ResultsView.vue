@@ -272,8 +272,8 @@ const shareResults = async () => {
     const myScore = myStats.value?.score || 0
     
     await navigator.share({
-      title: '🎮 Kahoot 遊戲結果',
-      text: `我在 Kahoot 遊戲中獲得第 ${myRank} 名，得分 ${myScore} 分！一起來挑戰吧！`,
+      title: '🎮 Ricky 遊戲小舖結果',
+      text: `我在 Ricky 遊戲小舖中獲得第 ${myRank} 名，得分 ${myScore} 分！一起來挑戰吧！`,
       url: window.location.origin
     })
     logInfo('VIEW_RESULTS', '分享遊戲結果成功', {

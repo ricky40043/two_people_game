@@ -5,7 +5,7 @@
       <div class="text-center mb-12 fade-in">
         <h1 class="text-6xl mb-4">🎮</h1>
         <h2 class="text-4xl font-bold text-white mb-4">
-          Kahoot 風格
+          風格
         </h2>
         <h3 class="text-2xl font-semibold text-white/90 mb-2">
           多人遊戲

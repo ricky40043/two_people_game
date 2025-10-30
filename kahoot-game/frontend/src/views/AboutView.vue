@@ -18,7 +18,7 @@
       <div class="card card-body fade-in">
         <div class="text-center mb-8">
           <div class="text-4xl mb-4">🎮</div>
-          <h1 class="text-3xl font-bold text-white mb-2">Kahoot 風格多人遊戲</h1>
+          <h1 class="text-3xl font-bold text-white mb-2">風格多人遊戲</h1>
           <p class="text-white/70 text-lg">即時互動 • 主角輪替 • 寓教於樂</p>
         </div>
 

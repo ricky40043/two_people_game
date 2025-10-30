@@ -6,7 +6,7 @@
         <div class="flex items-center justify-between">
           <router-link to="/" class="text-white font-bold text-xl flex items-center space-x-2">
             <span class="text-2xl">🎮</span>
-            <span>Kahoot 遊戲</span>
+            <span>Ricky 遊戲小舖</span>
           </router-link>
           
           <div class="flex items-center space-x-4">

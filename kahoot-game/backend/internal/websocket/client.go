@@ -838,13 +838,50 @@ func (c *Client) handleSubmitAnswer(data interface{}) {
 		c.send <- msgBytes
 	}
 
+	// 廣播給其他玩家，告知有人已作答
+	// 給主持人發送包含答案的訊息，給其他玩家發送不含答案的訊息
+	roomClients := c.hub.rooms[c.RoomID]
+
+	for client := range roomClients {
+		if client == c {
+			continue // 跳過答題者本人
+		}
+		
+		var msgData map[string]interface{}
+		if client.IsHost {
+			// 主持人可以看到所有答案
+			msgData = map[string]interface{}{
+				"playerId":   c.ID,
+				"playerName": c.PlayerName,
+				"isHost":     c.ID == room.CurrentHost,
+				"answer":     answer, // 主持人能看到答案
+			}
+		} else {
+			// 其他玩家只能看到已答題狀態
+			msgData = map[string]interface{}{
+				"playerId":   c.ID,
+				"playerName": c.PlayerName,
+				"isHost":     c.ID == room.CurrentHost,
+			}
+		}
+		
+		broadcastMsg := Message{
+			Type: "PLAYER_ANSWERED",
+			Data: msgData,
+		}
+
+		if broadcastBytes, err := json.Marshal(broadcastMsg); err == nil {
+			client.send <- broadcastBytes
+		}
+	}
+
 	// 檢查是否所有玩家都已答題
 	if c.checkAllPlayersAnswered(room) {
 		// 所有人都答完了，計算分數並顯示結果
 		c.calculateAndShowResults(room)
 	}
 
-	log.Printf("🎯 玩家 %s 提交答案: %s (耗時: %.2f秒)", c.PlayerName, answer, timeUsed)
+	log.Printf("🎯 玩家 %s 提交答案: %s (耗時: %.2f秒), 已廣播給其他玩家", c.PlayerName, answer, timeUsed)
 }
 
 // checkAllPlayersAnswered 檢查是否所有玩家都已答題

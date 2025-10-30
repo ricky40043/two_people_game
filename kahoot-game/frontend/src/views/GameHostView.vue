@@ -189,26 +189,26 @@
             第 {{ currentQuestionNumber }} 題結果
           </h2>
           
-          <!-- 正確答案 -->
-          <div v-if="gameStore.currentQuestion" class="mb-8">
-            <div class="text-lg text-gray-600 mb-2">正確答案:</div>
-            <div class="text-3xl font-bold text-green-600 mb-4">
-              {{ gameStore.currentQuestion.correctAnswer }}. {{ getCorrectAnswerText() }}
+          <!-- 主角答案 -->
+          <div v-if="hostAnswerInfo.show" class="mb-8">
+            <div class="text-lg text-gray-600 mb-2">主角選擇:</div>
+            <div class="text-3xl font-bold text-blue-600 mb-4">
+              選項 {{ hostAnswerInfo.answer }} - {{ hostAnswerInfo.text }}
             </div>
-            <div v-if="gameStore.currentQuestion.explanation" class="text-gray-600 text-lg">
-              {{ gameStore.currentQuestion.explanation }}
+            <div class="text-gray-600 text-lg">
+              主角: {{ hostAnswerInfo.playerName }}
             </div>
           </div>
 
-          <!-- 答題統計 -->
+          <!-- 猜測統計 -->
           <div class="grid grid-cols-2 gap-8 mb-8">
             <div class="text-center">
-              <div class="text-4xl font-bold text-green-600">{{ correctAnswers }}</div>
-              <div class="text-gray-600">答對人數</div>
+              <div class="text-4xl font-bold text-green-600">{{ correctGuesses }}</div>
+              <div class="text-gray-600">猜對人數</div>
             </div>
             <div class="text-center">
-              <div class="text-4xl font-bold text-red-600">{{ wrongAnswers }}</div>
-              <div class="text-gray-600">答錯人數</div>
+              <div class="text-4xl font-bold text-red-600">{{ wrongGuesses }}</div>
+              <div class="text-gray-600">猜錯人數</div>
             </div>
           </div>
 
@@ -310,15 +310,68 @@ const isLastQuestion = computed(() => {
   return gameStore.currentQuestionIndex >= gameStore.totalQuestions - 1
 })
 
-const correctAnswers = computed(() => {
-  const correct = Object.entries(gameLogic.playerAnswers.value)
-    .filter(([_, answer]) => answer === gameStore.currentQuestion?.correctAnswer)
+// 從 GameStore 獲取玩家答案（而不是 gameLogic）
+const playerAnswersFromStore = computed(() => {
+  const players = gameStore.currentRoom?.players || {}
+  const answers: Record<string, string> = {}
+  
+  Object.values(players).forEach(player => {
+    if (player.currentAnswer) {
+      answers[player.id] = player.currentAnswer
+    }
+  })
+  
+  console.log('📊 主持人界面玩家答案:', answers)
+  return answers
+})
+
+// 主角答案信息
+const hostAnswerInfo = computed(() => {
+  const currentHost = gameStore.currentHost
+  const hostPlayer = gameStore.getPlayerById(currentHost)
+  const hostAnswer = playerAnswersFromStore.value[currentHost]
+  
+  if (!hostAnswer || !hostPlayer) {
+    return { show: false, answer: '', text: '', playerName: '' }
+  }
+  
+  const question = gameStore.currentQuestion
+  const answerText = hostAnswer === 'A' ? question?.optionA : question?.optionB
+  
+  return {
+    show: true,
+    answer: hostAnswer,
+    text: answerText || '',
+    playerName: hostPlayer.name
+  }
+})
+
+// 猜對人數 (排除主角，只計算猜測者)
+const correctGuesses = computed(() => {
+  const hostAnswer = playerAnswersFromStore.value[gameStore.currentHost]
+  if (!hostAnswer) return 0
+  
+  const correct = Object.entries(playerAnswersFromStore.value)
+    .filter(([playerId, answer]) => 
+      playerId !== gameStore.currentHost && // 排除主角
+      answer === hostAnswer // 猜對主角答案
+    )
     .length
+  
+  console.log('📊 主持人界面統計: 主角答案=', hostAnswer, '猜對人數=', correct, '所有答案=', playerAnswersFromStore.value)
   return correct
 })
 
-const wrongAnswers = computed(() => {
-  return gameLogic.answeredCount.value - correctAnswers.value
+// 猜錯人數 (排除主角，只計算猜測者)
+const wrongGuesses = computed(() => {
+  const hostAnswer = playerAnswersFromStore.value[gameStore.currentHost]
+  if (!hostAnswer) return 0
+  
+  const total = Object.keys(playerAnswersFromStore.value).length
+  const hostCount = gameStore.currentHost in playerAnswersFromStore.value ? 1 : 0
+  const guessersCount = total - hostCount // 總答題人數 - 主角
+  
+  return guessersCount - correctGuesses.value
 })
 
 // 方法
@@ -327,18 +380,7 @@ const isPlayerOnline = (playerId: string) => {
   return player?.isConnected || false
 }
 
-const getCorrectAnswerText = () => {
-  const question = gameStore.currentQuestion
-  if (!question) return ''
-  
-  const answerKey = question.correctAnswer
-  const options = {
-    A: question.optionA,
-    B: question.optionB
-  }
-  
-  return options[answerKey as keyof typeof options] || ''
-}
+// getCorrectAnswerText 方法已移除，「2種人」遊戲不需要正確答案概念
 
 const nextQuestion = () => {
   gameLogic.nextQuestion()

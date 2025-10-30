@@ -364,7 +364,7 @@ const shareRoom = async () => {
   
   try {
     await navigator.share({
-      title: '🎮 Kahoot 遊戲邀請',
+      title: '🎮 Ricky 遊戲小舖邀請',
       text: `加入我的遊戲房間！房間代碼: ${roomId.value}`,
       url: joinUrl.value
     })
