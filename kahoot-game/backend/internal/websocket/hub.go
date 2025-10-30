@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +35,7 @@ type Hub struct {
 	// 服務層依賴
 	roomService *services.RoomService
 	gameService *services.GameService
+	frontendURL string
 
 	// 互斥鎖
 	mutex sync.RWMutex
@@ -46,7 +48,7 @@ type RoomMessage struct {
 }
 
 // NewHub 創建新的 Hub
-func NewHub(roomService *services.RoomService, gameService *services.GameService) *Hub {
+func NewHub(roomService *services.RoomService, gameService *services.GameService, frontendURL string) *Hub {
 	return &Hub{
 		clients:       make(map[*Client]bool),
 		rooms:         make(map[string]map[*Client]bool),
@@ -56,6 +58,7 @@ func NewHub(roomService *services.RoomService, gameService *services.GameService
 		roomBroadcast: make(chan *RoomMessage),
 		roomService:   roomService,
 		gameService:   gameService,
+		frontendURL:   strings.TrimSuffix(frontendURL, "/"),
 	}
 }
 
@@ -382,6 +385,15 @@ func (h *Hub) handlePlayerLeaveInternal(client *Client) {
 	}
 
 	log.Printf("✅ 玩家 %s 離開房間 %s 處理完成 (剩餘玩家: %d)", client.PlayerName, client.RoomID, remainingPlayers)
+}
+
+// BuildJoinURL 生成前端 Join URL
+func (h *Hub) BuildJoinURL(roomID string) string {
+	base := h.frontendURL
+	if base == "" {
+		base = "http://localhost:5173"
+	}
+	return fmt.Sprintf("%s/join/%s", strings.TrimSuffix(base, "/"), roomID)
 }
 
 // GetRoomClients 獲取房間客戶端列表

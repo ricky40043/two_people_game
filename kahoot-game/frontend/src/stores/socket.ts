@@ -5,6 +5,32 @@ import { useUIStore } from './ui'
 import { logInfo, logWarn, logError, logDebug, captureError } from '@/utils/logger'
 import type { WebSocketMessage } from '@/types'
 
+const normalizePath = (path: string) => (path.startsWith('/') ? path : `/${path}`)
+
+const resolveWebSocketURL = () => {
+  const envUrl = import.meta.env.VITE_WS_URL?.toString().trim()
+  if (envUrl) {
+    return envUrl
+  }
+
+  if (typeof window !== 'undefined') {
+    const path = normalizePath(import.meta.env.VITE_WS_PATH?.toString().trim() || '/ws')
+
+    if (import.meta.env.DEV) {
+      const protocol = (import.meta.env.VITE_WS_PROTOCOL || (window.location.protocol === 'https:' ? 'wss' : 'ws'))
+        .toString()
+        .replace(/:$/, '')
+      const port = import.meta.env.VITE_WS_PORT?.toString().trim() || '8080'
+      return `${protocol}://${window.location.hostname}:${port}${path}`
+    }
+
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    return `${protocol}//${window.location.host}${path}`
+  }
+
+  return 'ws://127.0.0.1:8080/ws'
+}
+
 export const useSocketStore = defineStore('socket', () => {
   const socket = ref<WebSocket | null>(null)
   const isConnected = ref(false)
@@ -20,9 +46,7 @@ export const useSocketStore = defineStore('socket', () => {
     shouldReconnect.value = true
     logInfo('WS', '嘗試建立 WebSocket 連線')
 
-    const wsUrl = import.meta.env.DEV 
-      ? 'ws://localhost:8080/ws' 
-      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
+    const wsUrl = resolveWebSocketURL()
 
     logDebug('WS', '連線目標 URL', { wsUrl })
 

@@ -122,14 +122,22 @@ src/
 
 ### 開發環境
 ```env
-VITE_API_URL=http://localhost:8080
-VITE_WS_URL=ws://localhost:8080
+# 預設會依據瀏覽器所在的 IP 自動連線到 :8080
+# 只有在自訂埠或協定時才需要設定
+VITE_API_PORT=8080
+VITE_API_PROTOCOL=http
+VITE_WS_PORT=8080
+VITE_WS_PROTOCOL=ws
 ```
 
 ### 生產環境
 ```env
-VITE_API_URL=https://your-api-domain.com
-VITE_WS_URL=wss://your-api-domain.com
+# 指向正式環境的 API / WebSocket
+VITE_API_URL=https://api.your-domain.com
+VITE_WS_URL=wss://api.your-domain.com/ws
+
+# 若部署在子路徑 (例如 https://your-domain.com/kahoot)
+VITE_BASE_PATH=/kahoot/
 ```
 
 ## 🚀 部署

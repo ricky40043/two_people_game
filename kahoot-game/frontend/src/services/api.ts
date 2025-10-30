@@ -1,9 +1,32 @@
 import axios from 'axios'
 import type { Question, APIResponse, CreateRoomRequest, RoomCreatedResponse } from '@/types'
 
+const normalizeUrl = (url: string) => url.replace(/\/+$/, '')
+
+const resolveApiBaseURL = () => {
+  const envUrl = import.meta.env.VITE_API_URL?.toString().trim()
+  if (envUrl) {
+    return normalizeUrl(envUrl)
+  }
+
+  if (typeof window !== 'undefined') {
+    if (import.meta.env.DEV) {
+      const protocol = (import.meta.env.VITE_API_PROTOCOL || (window.location.protocol === 'https:' ? 'https' : 'http'))
+        .toString()
+        .replace(/:$/, '')
+      const port = import.meta.env.VITE_API_PORT?.toString().trim() || '8080'
+      return `${protocol}://${window.location.hostname}:${port}/api`
+    }
+
+    return `${normalizeUrl(window.location.origin)}/api`
+  }
+
+  return '/api'
+}
+
 // 創建 axios 實例
 const api = axios.create({
-  baseURL: import.meta.env.DEV ? 'http://localhost:8080/api' : '/api',
+  baseURL: resolveApiBaseURL(),
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',

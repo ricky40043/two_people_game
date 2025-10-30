@@ -109,9 +109,11 @@ ws://localhost:8080/ws/:roomId       # 房間專用連線
 ```bash
 PORT=8080                    # 服務器端口
 REDIS_HOST=localhost         # Redis 主機
-DB_HOST=localhost           # PostgreSQL 主機
-MAX_PLAYERS_PER_ROOM=20     # 每房間最大玩家數
-ROOM_ID_LENGTH=6            # 房間ID長度
+DB_HOST=localhost            # PostgreSQL 主機
+FRONTEND_URL=http://localhost:5173   # 前端基底網址 (用於 QR / join 連結)
+CORS_ORIGINS=http://localhost:5173   # 允許的前端來源，逗號分隔
+MAX_PLAYERS_PER_ROOM=20      # 每房間最大玩家數
+ROOM_ID_LENGTH=6             # 房間ID長度
 ```
 
 ## 🚀 部署

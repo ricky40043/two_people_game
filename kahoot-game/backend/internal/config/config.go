@@ -12,6 +12,7 @@ type Config struct {
 	Port        string
 	Host        string
 	Environment string
+	FrontendURL string
 
 	// 資料庫配置
 	Database DatabaseConfig
@@ -74,10 +75,30 @@ type LogConfig struct {
 
 // Load 載入配置
 func Load() *Config {
+	frontendURL := strings.TrimSuffix(getEnv("FRONTEND_URL", "http://localhost:5173"), "/")
+	corsOrigins := getEnvAsSlice("CORS_ORIGINS", []string{
+		"http://localhost:5173",
+		"http://localhost:3000",
+	})
+
+	if frontendURL != "" {
+		matched := false
+		for _, origin := range corsOrigins {
+			if strings.TrimSuffix(origin, "/") == frontendURL {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			corsOrigins = append(corsOrigins, frontendURL)
+		}
+	}
+
 	return &Config{
 		Port:        getEnv("PORT", "8080"),
 		Host:        getEnv("HOST", "localhost"),
 		Environment: getEnv("ENV", "development"),
+		FrontendURL: frontendURL,
 
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
@@ -97,10 +118,7 @@ func Load() *Config {
 
 		JWTSecret: getEnv("JWT_SECRET", "your-super-secret-jwt-key"),
 
-		CORSOrigins: getEnvAsSlice("CORS_ORIGINS", []string{
-			"http://localhost:5173",
-			"http://localhost:3000",
-		}),
+		CORSOrigins: corsOrigins,
 
 		WebSocket: WebSocketConfig{
 			ReadBufferSize:  getEnvAsInt("WS_READ_BUFFER_SIZE", 1024),

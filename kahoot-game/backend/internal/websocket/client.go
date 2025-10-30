@@ -221,8 +221,8 @@ func (c *Client) handleCreateRoom(data interface{}) {
 	// 將客戶端加入房間
 	c.hub.AddClientToRoom(c, room.ID)
 
-	// 生成房間 URL（根據環境調整）
-	roomUrl := fmt.Sprintf("http://localhost:5173/join/%s", room.ID)
+	// 生成房間 URL（根據配置調整）
+	roomUrl := c.hub.BuildJoinURL(room.ID)
 	
 	// 發送房間創建成功訊息
 	response := Message{
@@ -340,13 +340,15 @@ func (c *Client) handleJoinAsHost(data interface{}) {
 	c.hub.AddClientToRoom(c, roomID)
 
 	// 發送加入成功訊息
+	roomUrl := c.hub.BuildJoinURL(roomID)
+
 	joinResponse := Message{
 		Type: "HOST_JOINED",
 		Data: map[string]interface{}{
 			"clientId":    c.ID,
 			"hostName":    hostName,
 			"roomId":      roomID,
-			"roomUrl":     fmt.Sprintf("http://localhost:5173/join/%s", roomID),
+			"roomUrl":     roomUrl,
 			"totalPlayers": room.GetPlayerCount(),
 			"players":      room.GetPlayerList(),
 		},

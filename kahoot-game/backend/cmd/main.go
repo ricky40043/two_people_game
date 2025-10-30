@@ -43,12 +43,12 @@ func main() {
 	questionService := services.NewQuestionService(nil)
 
 	// 初始化 WebSocket Hub
-	wsHub := websocket.NewHub(roomService, gameService)
+	wsHub := websocket.NewHub(roomService, gameService, cfg.FrontendURL)
 	go wsHub.Run()
 
 	// 初始化處理器
 	gameHandler := handlers.NewGameHandler(gameService)
-	roomHandler := handlers.NewRoomHandler(roomService)
+	roomHandler := handlers.NewRoomHandler(roomService, cfg.FrontendURL)
 	questionHandler := handlers.NewQuestionHandler(questionService)
 	wsHandler := handlers.NewWebSocketHandler(wsHub)
 

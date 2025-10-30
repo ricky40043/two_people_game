@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 
 	"kahoot-game/internal/models"
 	"kahoot-game/internal/services"
@@ -12,12 +14,14 @@ import (
 // RoomHandler 房間處理器
 type RoomHandler struct {
 	roomService *services.RoomService
+	frontendURL string
 }
 
 // NewRoomHandler 創建房間處理器
-func NewRoomHandler(roomService *services.RoomService) *RoomHandler {
+func NewRoomHandler(roomService *services.RoomService, frontendURL string) *RoomHandler {
 	return &RoomHandler{
 		roomService: roomService,
+		frontendURL: strings.TrimSuffix(frontendURL, "/"),
 	}
 }
 
@@ -43,19 +47,7 @@ func (h *RoomHandler) CreateRoom(c *gin.Context) {
 		return
 	}
 
-	// 動態生成 joinUrl
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	
-	// 獲取 Host，如果是 localhost:8080 則改為前端地址
-	host := c.Request.Host
-	if host == "localhost:8080" || host == "127.0.0.1:8080" {
-		host = "localhost:5173"
-	}
-	
-	joinUrl := scheme + "://" + host + "/join/" + room.ID
+	joinUrl := h.buildJoinURL(c, room.ID)
 	qrCodeData := joinUrl // QR Code 也使用完整的 joinUrl
 	
 	c.JSON(http.StatusCreated, gin.H{
@@ -70,6 +62,18 @@ func (h *RoomHandler) CreateRoom(c *gin.Context) {
 			"createdAt":         room.CreatedAt,
 		},
 	})
+}
+
+func (h *RoomHandler) buildJoinURL(c *gin.Context, roomID string) string {
+	if h.frontendURL != "" {
+		return fmt.Sprintf("%s/join/%s", h.frontendURL, roomID)
+	}
+
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s/join/%s", scheme, c.Request.Host, roomID)
 }
 
 // GetRoom 獲取房間資訊
