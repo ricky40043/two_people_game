@@ -147,14 +147,15 @@ func (s *GameService) StartTwoTypesGame(room *models.Room) error {
 	}
 	
 	// 設定第一題的主角
-	room.CurrentHost = s.selectNextHost(room, "")
+	room.CurrentHost = s.SelectNextHost(room, "")
+	room.NextHostOverride = ""
 	room.Status = models.RoomStatusQuestionDisplay
-	
+
 	return nil
 }
 
-// selectNextHost 選擇下一個主角（輪流）
-func (s *GameService) selectNextHost(room *models.Room, currentHost string) string {
+// SelectNextHost 選擇下一個主角（輪流）
+func (s *GameService) SelectNextHost(room *models.Room, currentHost string) string {
 	players := room.GetPlayerList()
 	if len(players) == 0 {
 		return ""
@@ -325,7 +326,12 @@ func (s *GameService) CalculateTwoTypesScores(room *models.Room, answers map[str
 // NextTwoTypesQuestion 進入下一題
 func (s *GameService) NextTwoTypesQuestion(room *models.Room) {
 	// 選擇下一個主角
-	room.CurrentHost = s.selectNextHost(room, room.CurrentHost)
+	if room.NextHostOverride != "" {
+		room.CurrentHost = room.NextHostOverride
+		room.NextHostOverride = ""
+	} else {
+		room.CurrentHost = s.SelectNextHost(room, room.CurrentHost)
+	}
 	
 	// 增加題目編號
 	room.CurrentQuestion++

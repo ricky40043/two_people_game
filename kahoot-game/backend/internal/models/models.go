@@ -27,6 +27,7 @@ type Room struct {
 	TotalQuestions    int               `json:"totalQuestions"`
 	QuestionTimeLimit int               `json:"questionTimeLimit"`
 	CurrentHost       string            `json:"currentHost"`       // 當前題目的主角玩家
+	NextHostOverride  string            `json:"nextHostOverride,omitempty"`
 	TimeLeft          int               `json:"timeLeft"`
 	Questions         []Question        `json:"questions"`
 	Answers           map[string]*Answer `json:"answers"`           // 當前題目的玩家答案

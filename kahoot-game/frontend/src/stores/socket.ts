@@ -339,8 +339,41 @@ export const useSocketStore = defineStore('socket', () => {
 
   const handlePlayerLeft = (data: any) => {
       logInfo('PLAYER', '玩家離開房間', data)
-      gameStore.removePlayer(data.playerId)
+
+      if (Array.isArray(data.players)) {
+        if (gameStore.currentRoom) {
+          gameStore.currentRoom.players = {}
+        }
+
+        data.players.forEach((player: any) => {
+          gameStore.addPlayer({
+            id: player.id,
+            name: player.name,
+            roomId: player.roomId,
+            score: player.score || 0,
+            isHost: player.isHost || false,
+            isConnected: player.isConnected ?? true,
+            lastActivity: player.lastActivity ? new Date(player.lastActivity) : new Date()
+          })
+        })
+      } else {
+        gameStore.removePlayer(data.playerId)
+      }
+
+      if (typeof data.currentHost === 'string') {
+        gameStore.setCurrentHost(data.currentHost)
+      }
+
+      if (data.resetAnswers) {
+        gameStore.resetPlayerAnswerStatus()
+      }
+
       uiStore.showInfo(`${data.playerName} 離開了遊戲`)
+
+      if (data.hostChanged) {
+        const newHost = gameStore.getPlayerById(data.currentHost)?.name || '未知'
+        uiStore.showWarning(`主角已更新：${newHost}`)
+      }
   }
 
   const handleGameStarted = (data: any) => {

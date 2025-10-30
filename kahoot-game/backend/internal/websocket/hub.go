@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
+	"kahoot-game/internal/models"
 	"kahoot-game/internal/services"
 )
 
@@ -237,9 +239,10 @@ func (h *Hub) handlePlayerLeaveInternal(client *Client) {
 
 	log.Printf("👋 處理玩家離開: %s 從房間 %s", client.PlayerName, client.RoomID)
 
+	roomClients := h.rooms[client.RoomID]
+
 	// 從房間服務中移除玩家
-	err := h.roomService.RemovePlayer(client.RoomID, client.ID)
-	if err != nil {
+	if err := h.roomService.RemovePlayer(client.RoomID, client.ID); err != nil {
 		log.Printf("❌ 移除玩家失敗: %v", err)
 		return
 	}
@@ -248,26 +251,137 @@ func (h *Hub) handlePlayerLeaveInternal(client *Client) {
 	room, err := h.roomService.GetRoom(client.RoomID)
 	if err != nil {
 		log.Printf("❌ 獲取房間資訊失敗: %v", err)
+
+		// 房間可能已被清空，仍需通知其他客戶端
+		leaveMsg := Message{
+			Type: "PLAYER_LEFT",
+			Data: map[string]interface{}{
+				"playerId":     client.ID,
+				"playerName":   client.PlayerName,
+				"totalPlayers": 0,
+				"players":      []*models.Player{},
+				"currentHost":  "",
+				"hostChanged":  false,
+				"resetAnswers": true,
+			},
+		}
+
+		if msgBytes, marshalErr := json.Marshal(leaveMsg); marshalErr == nil {
+			h.broadcastToRoomExclude(client.RoomID, msgBytes, client)
+		}
+
+		// 通知遊戲結束
+		if len(roomClients) > 0 {
+			finishMsg := Message{
+				Type: "GAME_FINISHED",
+				Data: map[string]interface{}{
+					"message": "所有玩家已離開，遊戲結束",
+				},
+			}
+			if msgBytes, marshalErr := json.Marshal(finishMsg); marshalErr == nil {
+				h.broadcastToRoomExclude(client.RoomID, msgBytes, nil)
+			}
+		}
+
 		return
 	}
 
-	// 廣播玩家離開訊息（但排除已離開的客戶端）
+	// 清除離開玩家的答案
+	if room.Answers != nil {
+		delete(room.Answers, client.ID)
+	}
+
+	remainingPlayers := room.GetPlayerCount()
+	hostChanged := false
+	resetAnswers := false
+	shouldSkipCurrentQuestion := false
+	var nextClient *Client
+
+	if remainingPlayers > 0 {
+		// 如果當前主角不存在或就是離開者，選擇新的主角
+		currentHostMissing := room.CurrentHost == "" || room.Players[room.CurrentHost] == nil
+		if currentHostMissing {
+			if newHost := h.gameService.SelectNextHost(room, client.ID); newHost != "" {
+				room.CurrentHost = newHost
+				room.NextHostOverride = newHost
+				hostChanged = true
+			}
+		}
+
+		// 如果下一題預設主角是離開者，重新選擇
+		if room.NextHostOverride == client.ID {
+			if newOverride := h.gameService.SelectNextHost(room, client.ID); newOverride != "" {
+				room.NextHostOverride = newOverride
+				room.CurrentHost = newOverride
+				hostChanged = true
+			} else {
+				room.NextHostOverride = ""
+			}
+		}
+
+		if hostChanged {
+			if len(room.Answers) > 0 {
+				room.Answers = make(map[string]*models.Answer)
+			}
+			resetAnswers = true
+
+			if room.Status == models.RoomStatusQuestionDisplay {
+				shouldSkipCurrentQuestion = true
+				for c := range roomClients {
+					if c != client {
+						nextClient = c
+						break
+					}
+				}
+			}
+		}
+	} else {
+		room.NextHostOverride = ""
+	}
+
+	if err := h.roomService.UpdateRoom(room); err != nil {
+		log.Printf("❌ 更新房間資料失敗: %v", err)
+	}
+
+	leaveData := map[string]interface{}{
+		"playerId":     client.ID,
+		"playerName":   client.PlayerName,
+		"totalPlayers": remainingPlayers,
+		"players":      room.GetPlayerList(),
+		"currentHost":  room.CurrentHost,
+		"hostChanged":  hostChanged,
+		"resetAnswers": resetAnswers,
+	}
+
 	leaveMsg := Message{
 		Type: "PLAYER_LEFT",
-		Data: map[string]interface{}{
-			"playerId":     client.ID,
-			"playerName":   client.PlayerName,
-			"totalPlayers": room.GetPlayerCount(),
-			"players":      room.GetPlayerList(),
-		},
+		Data: leaveData,
 	}
 
 	if msgBytes, err := json.Marshal(leaveMsg); err == nil {
-		// 直接調用內部廣播，避免通道死鎖
 		h.broadcastToRoomExclude(client.RoomID, msgBytes, client)
 	}
 
-	log.Printf("✅ 玩家 %s 離開房間 %s 處理完成", client.PlayerName, client.RoomID)
+	if shouldSkipCurrentQuestion && nextClient != nil {
+		invalidMsg := Message{
+			Type: "QUESTION_INVALID",
+			Data: map[string]interface{}{
+				"message": "主角離開房間，本題無效",
+				"reason":  "host_left",
+			},
+		}
+
+		if msgBytes, err := json.Marshal(invalidMsg); err == nil {
+			h.broadcastToRoomExclude(client.RoomID, msgBytes, nil)
+		}
+
+		go func(handler *Client) {
+			time.Sleep(2 * time.Second)
+			handler.handleNextQuestion()
+		}(nextClient)
+	}
+
+	log.Printf("✅ 玩家 %s 離開房間 %s 處理完成 (剩餘玩家: %d)", client.PlayerName, client.RoomID, remainingPlayers)
 }
 
 // GetRoomClients 獲取房間客戶端列表

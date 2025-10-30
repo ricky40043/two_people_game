@@ -23,6 +23,7 @@ export interface Room {
   totalQuestions: number
   questionTimeLimit: number
   currentHost: string
+  nextHostOverride?: string
   timeLeft: number
   questions: Question[]
   createdAt: Date
