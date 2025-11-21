@@ -23,7 +23,7 @@ services:
         value: https://kahoot-game-frontend.onrender.com # Placeholder, update after frontend deploy
 
   # Frontend Service
-  - type: static
+  - type: static_site
     name: kahoot-game-frontend
     env: static
     plan: free
