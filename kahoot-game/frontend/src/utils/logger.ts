@@ -28,9 +28,8 @@ const FALLBACK_LOGGER: DebugLogger = {
   },
   warn: (category, message, data) => console.warn(`[${category}] ${message}`, data ?? ''),
   error: (category, message, data) => console.error(`[${category}] ${message}`, data ?? ''),
-  debug: (category, message, data) => {
+  debug: (_category, _message, _data) => {
     // 完全隱藏 DEBUG 級別的日誌
-    // console.debug(`[${category}] ${message}`, data ?? '')
   }
 }
 

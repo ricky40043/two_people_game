@@ -154,21 +154,22 @@ const generateQRCode = async () => {
     
     console.log('✅ QR Code 生成成功')
     
-  } catch (error) {
-    console.error('QR Code 生成失敗:', error)
+  } catch (error: unknown) {
+    const err = error instanceof Error ? error : new Error(String(error))
+    console.error('QR Code 生成失敗:', err)
     
     if (window.debugLogger) {
       window.debugLogger.error('QR_CODE', 'QR Code 生成失敗', {
-        error: error.message,
-        stack: error.stack,
+        error: err.message,
+        stack: err.stack,
         data: props.data,
         size: props.size,
         containerExists: !!qrCodeRef.value
       })
     }
     
-    emit('error', error as Error)
-    uiStore.showError(`QR Code 生成失敗: ${error.message}`)
+    emit('error', err)
+    uiStore.showError(`QR Code 生成失敗: ${err.message}`)
   }
 }
 
@@ -176,8 +177,9 @@ const copyToClipboard = async () => {
   try {
     await navigator.clipboard.writeText(props.data)
     uiStore.showSuccess('內容已複製到剪貼板')
-  } catch (error) {
-    console.error('複製失敗:', error)
+  } catch (error: unknown) {
+    const err = error instanceof Error ? error : new Error(String(error))
+    console.error('複製失敗:', err)
     uiStore.showError('複製失敗')
   }
 }

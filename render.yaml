@@ -1,0 +1,48 @@
+services:
+  # Backend Service
+  - type: web
+    name: kahoot-game-backend
+    env: go
+    plan: free
+    region: singapore
+    buildCommand: cd kahoot-game/backend && go build -o main cmd/main.go
+    startCommand: ./kahoot-game/backend/main
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: ENV
+        value: production
+      - key: DATABASE_URL
+        value: postgresql://postgres.bemhpytawvgvpgqfsmfx:Aa16171819.QAZWSX@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: kahoot-game-redis
+          property: connectionString
+      - key: FRONTEND_URL
+        value: https://kahoot-game-frontend.onrender.com # Placeholder, update after frontend deploy
+
+  # Frontend Service
+  - type: static
+    name: kahoot-game-frontend
+    env: static
+    plan: free
+    region: singapore
+    buildCommand: cd kahoot-game/frontend && npm install && npm run build
+    publishDir: kahoot-game/frontend/dist
+    routes:
+      - type: rewrite
+        source: /**
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        value: https://kahoot-game-backend.onrender.com # Placeholder, update after backend deploy
+      - key: VITE_WS_URL
+        value: wss://kahoot-game-backend.onrender.com/ws # Placeholder, update after backend deploy
+
+  # Redis Service
+  - type: redis
+    name: kahoot-game-redis
+    region: singapore
+    plan: free # Note: Render Free Redis is ephemeral (data loss on restart)
+    ipAllowList: [] # Allow internal connections only

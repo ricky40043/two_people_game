@@ -104,7 +104,7 @@ const routes: Array<RouteRecordRaw> = [
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes,
-  scrollBehavior(to, from, savedPosition) {
+  scrollBehavior(_to, _from, savedPosition) {
     if (savedPosition) {
       return savedPosition
     } else {
@@ -114,7 +114,7 @@ const router = createRouter({
 })
 
 // 全域路由守衛
-router.beforeEach((to, from, next) => {
+router.beforeEach((to, _from, next) => {
   // 設置頁面標題
   if (to.meta?.title) {
     document.title = to.meta.title as string

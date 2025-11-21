@@ -34,6 +34,8 @@ type Config struct {
 	Log LogConfig
 }
 
+
+
 // DatabaseConfig PostgreSQL 資料庫配置
 type DatabaseConfig struct {
 	Host     string
@@ -42,6 +44,7 @@ type DatabaseConfig struct {
 	Password string
 	Name     string
 	SSLMode  string
+	URL      string // 直接使用連接字串
 }
 
 // RedisConfig Redis 配置
@@ -50,6 +53,7 @@ type RedisConfig struct {
 	Port     string
 	Password string
 	DB       int
+	URL      string // 直接使用連接字串
 }
 
 // WebSocketConfig WebSocket 配置
@@ -107,6 +111,7 @@ func Load() *Config {
 			Password: getEnv("DB_PASSWORD", "password"),
 			Name:     getEnv("DB_NAME", "kahoot_game"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
+			URL:      getEnv("DATABASE_URL", ""),
 		},
 
 		Redis: RedisConfig{
@@ -114,6 +119,7 @@ func Load() *Config {
 			Port:     getEnv("REDIS_PORT", "6379"),
 			Password: getEnv("REDIS_PASSWORD", ""),
 			DB:       getEnvAsInt("REDIS_DB", 0),
+			URL:      getEnv("REDIS_URL", ""),
 		},
 
 		JWTSecret: getEnv("JWT_SECRET", "your-super-secret-jwt-key"),
@@ -168,6 +174,9 @@ func getEnvAsSlice(key string, defaultValue []string) []string {
 
 // GetDatabaseDSN 獲取資料庫連線字串
 func (c *Config) GetDatabaseDSN() string {
+	if c.Database.URL != "" {
+		return c.Database.URL
+	}
 	return "host=" + c.Database.Host +
 		" port=" + c.Database.Port +
 		" user=" + c.Database.User +
@@ -177,6 +186,7 @@ func (c *Config) GetDatabaseDSN() string {
 }
 
 // GetRedisAddr 獲取 Redis 地址
+// 注意：如果使用 URL，此方法可能不適用，建議直接在 redis.go 中處理
 func (c *Config) GetRedisAddr() string {
 	return c.Redis.Host + ":" + c.Redis.Port
 }

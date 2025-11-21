@@ -266,7 +266,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useGameStore } from '@/stores/game'
 import { useSocketStore } from '@/stores/socket'
@@ -333,7 +333,7 @@ const isDev = computed(() => {
 })
 
 // 方法
-const onQRGenerated = (canvas: HTMLCanvasElement) => {
+const onQRGenerated = (_canvas: HTMLCanvasElement) => {
   logDebug('VIEW_LOBBY', 'QR Code 生成成功')
 }
 
@@ -443,10 +443,6 @@ const leaveRoom = () => {
   router.push('/')
 }
 
-const getPlayerInitial = (name: string) => {
-  return name.charAt(0).toUpperCase()
-}
-
 const formatJoinTime = (date: Date) => {
   const now = new Date()
   const diff = Math.floor((now.getTime() - date.getTime()) / 1000)
@@ -457,7 +453,7 @@ const formatJoinTime = (date: Date) => {
 }
 
 // 監聽遊戲開始事件
-const unwatchGameState = gameStore.$subscribe((mutation, state) => {
+const unwatchGameState = gameStore.$subscribe((_mutation, state) => {
   if (state.gameState === 'playing') {
     // 遊戲開始，跳轉到對應的遊戲頁面
     if (gameStore.isHost) {

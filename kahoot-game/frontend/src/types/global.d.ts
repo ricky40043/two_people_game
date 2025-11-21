@@ -18,8 +18,8 @@ interface TimerEvent {
 
 declare global {
   interface Window {
-    debugLogger: DebugLogger
-    timerEvents: TimerEvent[]
+    debugLogger?: DebugLogger
+    timerEvents?: TimerEvent[]
   }
 }
 

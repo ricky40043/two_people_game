@@ -47,7 +47,6 @@ export function useGameTimer() {
     startTime = duration
     isRunning.value = true
     isPaused.value = false
-    pausedTime = 0
 
     timerId = setInterval(() => {
       if (isPaused.value) return

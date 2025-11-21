@@ -1,63 +1,36 @@
 {
   "version": 2,
   "name": "mini-games-collection",
+  "env": {
+    "VITE_API_URL": "https://api.example.com",
+    "VITE_WS_URL": "wss://api.example.com/ws",
+    "VITE_BASE_PATH": "/kahoot/"
+  },
   "builds": [
     {
-      "src": "**/*.html",
+      "src": "package.json",
       "use": "@vercel/static"
     },
     {
-      "src": "**/*.js",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "**/*.css",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "**/*.mp3",
-      "use": "@vercel/static"
+      "src": "kahoot-game/frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "kahoot-game/frontend/dist"
+      }
     }
   ],
   "routes": [
     {
-      "src": "/",
-      "dest": "/index.html"
+      "src": "/kahoot(?!/assets)(.*)",
+      "dest": "/kahoot-game/frontend/dist/index.html"
     },
     {
-      "src": "/bomb-topic",
-      "dest": "/bomb-topic/index.html"
+      "src": "/kahoot/assets/(.*)",
+      "dest": "/kahoot-game/frontend/dist/assets/$1"
     },
     {
-      "src": "/guess-number",
-      "dest": "/guess-number/index.html"
-    },
-    {
-      "src": "/two-types-people",
-      "dest": "/two-types-people/index.html"
-    },
-    {
-      "src": "/two-player-quiz",
-      "dest": "/two-player-quiz/index.html"
-    },
-    {
-      "src": "/who-is-spy",
-      "dest": "/who-is-spy/index.html"
-    },
-    {
-      "src": "/2048",
-      "dest": "/CascadeProjects/2048/index.html"
-    }
-  ],
-  "headers": [
-    {
-      "source": "**/*.mp3",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=31536000, immutable"
-        }
-      ]
+      "src": "/(.*)",
+      "dest": "/$1"
     }
   ]
 }

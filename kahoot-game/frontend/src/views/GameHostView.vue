@@ -70,7 +70,7 @@
               <!-- 答案選項 -->
               <div class="grid grid-cols-2 gap-4">
                 <div 
-                  v-for="(option, index) in questionOptions" 
+                  v-for="option in questionOptions" 
                   :key="option.key"
                   class="answer-option"
                   :class="option.colorClass"
@@ -259,7 +259,6 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useGameStore } from '@/stores/game'
-import { useSocketStore } from '@/stores/socket'
 import { useUIStore } from '@/stores/ui'
 import { useGameLogic } from '@/composables/useGameLogic'
 import PlayerAvatar from '@/components/PlayerAvatar.vue'
@@ -267,7 +266,6 @@ import PlayerAvatar from '@/components/PlayerAvatar.vue'
 const route = useRoute()
 const router = useRouter()
 const gameStore = useGameStore()
-const socketStore = useSocketStore()
 const uiStore = useUIStore()
 const gameLogic = useGameLogic()
 
@@ -305,6 +303,7 @@ const timeLeftClass = computed(() => {
 
 const answerProgress = computed(() => gameLogic.answerProgress.value)
 const canNextQuestion = computed(() => gameLogic.canNextQuestion.value)
+const answeredCount = computed(() => gameLogic.answeredCount.value)
 
 const isLastQuestion = computed(() => {
   return gameStore.currentQuestionIndex >= gameStore.totalQuestions - 1
@@ -328,6 +327,10 @@ const playerAnswersFromStore = computed(() => {
 // 主角答案信息
 const hostAnswerInfo = computed(() => {
   const currentHost = gameStore.currentHost
+  if (!currentHost) {
+    return { show: false, answer: '', text: '', playerName: '' }
+  }
+
   const hostPlayer = gameStore.getPlayerById(currentHost)
   const hostAnswer = playerAnswersFromStore.value[currentHost]
   
@@ -348,12 +351,15 @@ const hostAnswerInfo = computed(() => {
 
 // 猜對人數 (排除主角，只計算猜測者)
 const correctGuesses = computed(() => {
-  const hostAnswer = playerAnswersFromStore.value[gameStore.currentHost]
+  const hostId = gameStore.currentHost
+  if (!hostId) return 0
+
+  const hostAnswer = playerAnswersFromStore.value[hostId]
   if (!hostAnswer) return 0
   
   const correct = Object.entries(playerAnswersFromStore.value)
     .filter(([playerId, answer]) => 
-      playerId !== gameStore.currentHost && // 排除主角
+      playerId !== hostId && // 排除主角
       answer === hostAnswer // 猜對主角答案
     )
     .length
@@ -364,11 +370,14 @@ const correctGuesses = computed(() => {
 
 // 猜錯人數 (排除主角，只計算猜測者)
 const wrongGuesses = computed(() => {
-  const hostAnswer = playerAnswersFromStore.value[gameStore.currentHost]
+  const hostId = gameStore.currentHost
+  if (!hostId) return 0
+
+  const hostAnswer = playerAnswersFromStore.value[hostId]
   if (!hostAnswer) return 0
-  
+
   const total = Object.keys(playerAnswersFromStore.value).length
-  const hostCount = gameStore.currentHost in playerAnswersFromStore.value ? 1 : 0
+  const hostCount = hostId ? (hostId in playerAnswersFromStore.value ? 1 : 0) : 0
   const guessersCount = total - hostCount // 總答題人數 - 主角
   
   return guessersCount - correctGuesses.value
@@ -409,7 +418,7 @@ const endGame = () => {
 }
 
 // 監聽遊戲狀態變化
-const unwatchGameState = gameStore.$subscribe((mutation, state) => {
+const unwatchGameState = gameStore.$subscribe((_mutation, state) => {
   if (state.gameState === 'finished') {
     router.push(`/results/${roomId.value}`)
     unwatchGameState()

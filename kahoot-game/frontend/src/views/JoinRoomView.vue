@@ -300,7 +300,7 @@ const mockQRScan = () => {
 }
 
 // 監聽加入房間成功事件
-const unwatchRoom = gameStore.$subscribe((mutation, state) => {
+const unwatchRoom = gameStore.$subscribe((_mutation, state) => {
   if (state.currentRoom && state.currentPlayer && !state.currentPlayer.isHost) {
     logInfo('VIEW_JOIN_ROOM', '玩家加入成功，即將跳轉遊戲畫面', {
       roomId: state.currentRoom.id,

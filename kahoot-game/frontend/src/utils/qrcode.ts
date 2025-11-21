@@ -53,7 +53,13 @@ export const generateQRCodeToCanvas = async (
   const finalOptions = { ...defaultOptions, ...options }
   
   try {
-    const canvas = await QRCode.toCanvas(container, text, finalOptions)
+    const canvas = document.createElement('canvas')
+    await QRCode.toCanvas(canvas, text, finalOptions)
+
+    // 清空容器並附加新的 canvas
+    container.innerHTML = ''
+    container.appendChild(canvas)
+
     return canvas
   } catch (error) {
     console.error('QR Code 生成失敗:', error)

@@ -151,10 +151,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { useSocketStore } from '@/stores/socket'
 import { useUIStore } from '@/stores/ui'
 
-const socketStore = useSocketStore()
 const uiStore = useUIStore()
 
 // 響應式數據

@@ -163,7 +163,7 @@ import { useSocketStore } from '@/stores/socket'
 import { useGameStore } from '@/stores/game'
 import { useUIStore } from '@/stores/ui'
 import { apiService } from '@/services/api'
-import { logInfo, logWarn, logError, captureError } from '@/utils/logger'
+import { logInfo, logError, captureError } from '@/utils/logger'
 
 const router = useRouter()
 const socketStore = useSocketStore()
@@ -337,26 +337,27 @@ const createRoom = async () => {
     console.log('🎯 跳轉到大廳:', `/lobby/${roomData.roomId}`)
     router.push(`/lobby/${roomData.roomId}`)
     
-  } catch (error) {
+  } catch (error: unknown) {
     captureError('VIEW_CREATE_ROOM', error, {
       form: { ...form.value }
     })
-    console.error('❌ 創建房間失敗:', error)
-    
+    const err = error instanceof Error ? error : new Error(String(error))
+    console.error('❌ 創建房間失敗:', err)
+
     if (window.debugLogger) {
       window.debugLogger.error('CREATE_ROOM', '創建房間失敗', {
-        error: error.message,
-        stack: error.stack
+        error: err.message,
+        stack: err.stack
       })
     }
-    
+
     let errorMessage = '創建房間失敗'
-    if (error.message?.includes?.('timeout')) {
+    if (err.message?.toLowerCase().includes('timeout')) {
       errorMessage = '創建房間超時，請重試'
-    } else if (error.message?.includes?.('network')) {
+    } else if (err.message?.toLowerCase().includes('network')) {
       errorMessage = '網路連線失敗，請檢查網路'
-    } else if (error.message) {
-      errorMessage = error.message
+    } else if (err.message) {
+      errorMessage = err.message
     }
 
     logError('VIEW_CREATE_ROOM', '創建房間失敗', {

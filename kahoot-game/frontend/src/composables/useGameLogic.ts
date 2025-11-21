@@ -16,7 +16,6 @@ export function useGameLogic() {
   const isLoading = ref(false)
   const currentHostIndex = ref(0)
   const playerAnswers = ref<Record<string, string>>({}) // playerId -> answer
-  const questionStartTime = ref<Date | null>(null)
 
   // 計算屬性
   const currentQuestion = computed(() => gameStore.currentQuestion)
@@ -96,7 +95,6 @@ export function useGameLogic() {
 
     // 重置狀態
     playerAnswers.value = {}
-    questionStartTime.value = new Date()
 
     // 設定當前主角
     const hostPlayer = currentHostPlayer.value
@@ -119,7 +117,12 @@ export function useGameLogic() {
         questionId: question.id,
         questionIndex: gameStore.currentQuestionIndex,
         questionText: question.questionText,
-        options: [question.optionA, question.optionB, question.optionC, question.optionD],
+        options: [
+          question.optionA,
+          question.optionB,
+          question.optionC,
+          question.optionD
+        ].filter((option): option is string => Boolean(option)),
         hostPlayer: hostPlayer?.id || '',
         hostPlayerName: hostPlayer?.name || '',
         timeLimit,
@@ -137,10 +140,6 @@ export function useGameLogic() {
       console.log('玩家已經答過題了')
       return
     }
-
-    const _responseTime = questionStartTime.value 
-      ? (Date.now() - questionStartTime.value.getTime()) / 1000
-      : 0
 
     playerAnswers.value[playerId] = answer
 

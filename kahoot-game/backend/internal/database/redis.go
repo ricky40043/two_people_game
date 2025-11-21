@@ -13,27 +13,39 @@ import (
 
 // NewRedisClient 創建新的 Redis 客戶端
 func NewRedisClient(cfg *config.Config) *redis.Client {
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     cfg.GetRedisAddr(),
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-		
-		// 連線池設定
-		PoolSize:     20,
-		MinIdleConns: 5,
-		MaxConnAge:   5 * time.Minute,
-		
-		// 超時設定
-		DialTimeout:  5 * time.Second,
-		ReadTimeout:  3 * time.Second,
-		WriteTimeout: 3 * time.Second,
-		
-		// 重試設定
-		MaxRetries:      3,
-		MinRetryBackoff: 8 * time.Millisecond,
-		MaxRetryBackoff: 512 * time.Millisecond,
-	})
+	var opts *redis.Options
+	var err error
 
+	if cfg.Redis.URL != "" {
+		opts, err = redis.ParseURL(cfg.Redis.URL)
+		if err != nil {
+			// 如果解析失敗，回退到普通配置或 panic
+			fmt.Printf("解析 Redis URL 失敗: %v\n", err)
+			// 這裡我們選擇繼續使用普通配置作為備案，或者直接返回錯誤（但函數簽名不支援）
+			// 為了簡單起見，我們假設 URL 正確，或者在下面覆蓋
+		}
+	}
+
+	if opts == nil {
+		opts = &redis.Options{
+			Addr:     cfg.GetRedisAddr(),
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+		}
+	}
+
+	// 統一設置連線池參數 (如果 ParseURL 沒有設置這些)
+	opts.PoolSize = 20
+	opts.MinIdleConns = 5
+	opts.MaxConnAge = 5 * time.Minute
+	opts.DialTimeout = 5 * time.Second
+	opts.ReadTimeout = 3 * time.Second
+	opts.WriteTimeout = 3 * time.Second
+	opts.MaxRetries = 3
+	opts.MinRetryBackoff = 8 * time.Millisecond
+	opts.MaxRetryBackoff = 512 * time.Millisecond
+
+	rdb := redis.NewClient(opts)
 	return rdb
 }
 

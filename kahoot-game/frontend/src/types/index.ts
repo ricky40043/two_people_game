@@ -45,7 +45,12 @@ export interface Question {
   questionText: string
   optionA: string
   optionB: string
+  optionC?: string
+  optionD?: string
+  correctAnswer?: string
+  explanation?: string
   category?: string
+  difficulty?: number
   timesUsed?: number
   isActive?: boolean
   createdAt?: Date
@@ -70,6 +75,12 @@ export interface ScoreInfo {
   score: number
   rank: number
   scoreGained: number
+  correctAnswers?: number
+  accuracy?: number
+  timesAsHost?: number
+  timesAsGuesser?: number
+  totalAnswers?: number
+  guessAccuracy?: number
 }
 
 // 遊戲統計
@@ -97,6 +108,7 @@ export interface CreateRoomRequest {
   hostName: string
   totalQuestions: number
   questionTimeLimit: number
+  gameMode?: string
 }
 
 export interface JoinRoomRequest {

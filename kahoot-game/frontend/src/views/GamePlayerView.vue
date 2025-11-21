@@ -117,7 +117,7 @@
           <!-- 答案選項 -->
           <div class="grid grid-cols-1 gap-4">
             <button
-              v-for="(option, index) in questionOptions"
+              v-for="option in questionOptions"
               :key="option.key"
               @click="selectAnswer(option.key)"
               :disabled="hasAnswered || gameStore.timeLeft <= 0"
@@ -324,12 +324,6 @@ const isMyTurn = computed(() => {
   return gameStore.currentHost === gameStore.currentPlayer?.id
 })
 
-const myAnswerCorrect = computed(() => {
-  // 在「2種人」遊戲中，正確性由後端計算分數決定
-  // 這裡不需要前端判斷正確性
-  return false
-})
-
 const answeredPlayersCount = computed(() => {
   // 使用 GameStore 中的計算屬性
   return gameStore.answeredPlayersCount
@@ -382,7 +376,7 @@ const resetQuestionState = () => {
 const currentQuestionId = ref<number>(0)
 
 // 監聽遊戲狀態變化
-const unwatchGameState = gameStore.$subscribe((mutation, state) => {
+const unwatchGameState = gameStore.$subscribe((_mutation, state) => {
   if (state.gameState === 'playing') {
     // 檢查是否是新題目（題目ID變化）
     const newQuestionId = gameStore.currentQuestion?.id || 0
