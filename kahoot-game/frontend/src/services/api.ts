@@ -6,7 +6,8 @@ const normalizeUrl = (url: string) => url.replace(/\/+$/, '')
 const resolveApiBaseURL = () => {
   const envUrl = import.meta.env.VITE_API_URL?.toString().trim()
   if (envUrl) {
-    return normalizeUrl(envUrl)
+    const url = normalizeUrl(envUrl)
+    return url.endsWith('/api') ? url : `${url}/api`
   }
 
   if (typeof window !== 'undefined') {
