@@ -26,7 +26,6 @@ services:
   - type: web
     name: kahoot-game-frontend
     runtime: static
-    plan: free
     buildCommand: cd kahoot-game/frontend && npm install && npm run build
     staticPublishPath: kahoot-game/frontend/dist
     routes:
