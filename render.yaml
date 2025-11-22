@@ -27,7 +27,6 @@ services:
     name: kahoot-game-frontend
     runtime: static
     plan: free
-    region: singapore
     buildCommand: cd kahoot-game/frontend && npm install && npm run build
     staticPublishPath: kahoot-game/frontend/dist
     routes:
