@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"kahoot-game/internal/config"
+	"kahoot-game/internal/database"
 	"kahoot-game/internal/handlers"
 	"kahoot-game/internal/services"
 	"kahoot-game/internal/websocket"
@@ -33,14 +35,45 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	// 測試模式：跳過資料庫連線
-	log.Println("⚠️ 測試模式：跳過資料庫連線")
-	log.Println("✅ 將使用備用題目和記憶體存儲")
+	// 初始化 Redis
+	redisClient := database.NewRedisClient(cfg)
 
-	// 初始化服務層（測試模式）
-	gameService := services.NewGameService(nil, nil)
-	roomService := services.NewRoomService(nil, gameService)
-	questionService := services.NewQuestionService(nil)
+	// 測試 Redis 連線
+	ctx := context.Background()
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		log.Printf("⚠️ 無法連接 Redis: %v", err)
+		// 根據需求決定是否要 panic，這裡我們先繼續，讓 Service 決定是否降級
+	} else {
+		log.Println("✅ Redis 連線成功")
+	}
+
+	// 初始化資料庫
+	var db *sql.DB
+	var err error
+
+	// 嘗試連接資料庫
+	db, err = database.NewPostgresDB(cfg)
+	if err != nil {
+		log.Printf("⚠️ 無法連接資料庫: %v", err)
+		log.Println("⚠️ 將使用記憶體模式運行")
+	} else {
+		log.Println("✅ 資料庫連線成功")
+
+		// 自動遷移表格
+		if err := database.CreateTables(db); err != nil {
+			log.Printf("⚠️ 創建表格失敗: %v", err)
+		}
+
+		// 插入種子數據
+		if err := database.SeedQuestions(db); err != nil {
+			log.Printf("⚠️ 插入種子數據失敗: %v", err)
+		}
+	}
+
+	// 初始化服務層
+	gameService := services.NewGameService(db, redisClient)
+	roomService := services.NewRoomService(redisClient, gameService)
+	questionService := services.NewQuestionService(db)
 
 	// 初始化 WebSocket Hub
 	wsHub := websocket.NewHub(roomService, gameService, cfg.FrontendURL)
@@ -66,7 +99,7 @@ func main() {
 		log.Printf("🚀 服務器啟動在 http://%s:%s", cfg.Host, cfg.Port)
 		log.Printf("📡 WebSocket 端點: ws://%s:%s/ws", cfg.Host, cfg.Port)
 		log.Printf("🎮 API 文檔: http://%s:%s/api/health", cfg.Host, cfg.Port)
-		
+
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("❌ 服務器啟動失敗: %v", err)
 		}
@@ -139,7 +172,7 @@ func setupRoutes(cfg *config.Config, gameHandler *handlers.GameHandler, roomHand
 func corsMiddleware(origins []string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
-		
+
 		// 檢查是否為允許的 origin
 		allowed := false
 		for _, allowedOrigin := range origins {
@@ -152,7 +185,7 @@ func corsMiddleware(origins []string) gin.HandlerFunc {
 		if allowed {
 			c.Header("Access-Control-Allow-Origin", origin)
 		}
-		
+
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
 		c.Header("Access-Control-Allow-Credentials", "true")
