@@ -2,7 +2,7 @@ services:
   # Backend Service
   - type: web
     name: kahoot-game-backend
-    env: go
+    runtime: go
     plan: free
     region: singapore
     buildCommand: cd kahoot-game/backend && go build -o main cmd/main.go
@@ -23,13 +23,13 @@ services:
         value: https://kahoot-game-frontend.onrender.com # Placeholder, update after frontend deploy
 
   # Frontend Service
-  - type: static_site
+  - type: web
     name: kahoot-game-frontend
-    env: static
+    runtime: static
     plan: free
     region: singapore
     buildCommand: cd kahoot-game/frontend && npm install && npm run build
-    publishDir: kahoot-game/frontend/dist
+    staticPublishPath: kahoot-game/frontend/dist
     routes:
       - type: rewrite
         source: /**
