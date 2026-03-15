@@ -301,14 +301,14 @@ const joinRoom = async () => {
     // 發送加入房間請求
     socketStore.joinRoom(form.value.roomId, form.value.playerName)
 
-    // 設置等待跳轉的超時
+    // 設置等待跳轉的超時 (縮短到 5 秒)
     setTimeout(() => {
       if (isSubmitting.value) {
         uiStore.showError('加入房間超時，請檢查房間代碼')
         isSubmitting.value = false
         uiStore.setLoading(false)
       }
-    }, 10000) // 10秒超時
+    }, 5000) // 5秒超時
     
   } catch (error) {
     captureError('VIEW_JOIN_ROOM', error, {
@@ -366,6 +366,24 @@ const unwatchRoom = gameStore.$subscribe((_mutation, state) => {
     // 加入房間成功，直接跳轉到玩家遊戲畫面
     router.push(`/game/player/${state.currentRoom.id}`)
     unwatchRoom() // 取消監聽
+  }
+})
+
+// 監聽錯誤事件
+socketStore.socket?.addEventListener('message', (event) => {
+  try {
+    const message = JSON.parse(event.data)
+    if (message.type === 'ERROR') {
+      // 如果是加入房間相關的錯誤，重置狀態
+      if (message.data.code === 'ROOM_NOT_FOUND' || 
+          message.data.code === 'JOIN_ROOM_FAILED' ||
+          message.data.message?.includes('玩家名稱')) {
+        isSubmitting.value = false
+        uiStore.setLoading(false)
+      }
+    }
+  } catch (e) {
+    // 忽略解析錯誤
   }
 })
 
