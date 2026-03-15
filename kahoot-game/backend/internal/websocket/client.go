@@ -275,6 +275,12 @@ func (c *Client) handleJoinRoom(data interface{}) {
 		return
 	}
 
+	// 檢查客戶端是否已經在其他房間
+	if c.RoomID != "" && c.RoomID != roomID {
+		log.Printf("⚠️ 客戶端 %s 嘗試加入新房間 %s，但仍在舊房間 %s 中", c.ID, roomID, c.RoomID)
+		c.hub.removeClientFromRoom(c, c.RoomID)
+	}
+
 	// 呼叫房間服務加入房間
 	player, err := c.hub.roomService.AddPlayer(roomID, c.ID, playerName)
 	if err != nil {
@@ -341,6 +347,13 @@ func (c *Client) handleJoinAsHost(data interface{}) {
 		return
 	}
 
+	// 檢查客戶端是否已經在其他房間
+	if c.RoomID != "" && c.RoomID != roomID {
+		log.Printf("⚠️ 客戶端 %s 嘗試加入新房間 %s，但仍在舊房間 %s 中", c.ID, roomID, c.RoomID)
+		// 從舊房間移除
+		c.hub.removeClientFromRoom(c, c.RoomID)
+	}
+
 	// 驗證房間是否存在
 	room, err := c.hub.roomService.GetRoom(roomID)
 	if err != nil {
@@ -399,6 +412,12 @@ func (c *Client) handleRejoinRoom(data interface{}) {
 	if roomID == "" || playerID == "" {
 		c.sendError("INVALID_DATA", "房間ID和玩家ID不能為空")
 		return
+	}
+
+	// 檢查客戶端是否已經在其他房間
+	if c.RoomID != "" && c.RoomID != roomID {
+		log.Printf("⚠️ 客戶端 %s 嘗試重連到新房間 %s，但仍在舊房間 %s 中", c.ID, roomID, c.RoomID)
+		c.hub.removeClientFromRoom(c, c.RoomID)
 	}
 
 	// 獲取房間
