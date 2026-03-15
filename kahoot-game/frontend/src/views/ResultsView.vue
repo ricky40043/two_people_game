@@ -219,20 +219,23 @@ const finalRanking = computed(() => gameStore.sortedScores)
 
 const winner = computed(() => finalRanking.value[0] || null)
 
-const myStats = computed(() => {
+  const myStats = computed(() => {
   if (!gameStore.currentPlayer) return null
-  
+
   const myRanking = finalRanking.value.find(
     p => p.playerId === gameStore.currentPlayer?.id
   )
-  
-  if (!myRanking) return null
-  
+
+  if (!myRanking) {
+    console.log('⚠️ 找不到我的排名數據，玩家ID:', gameStore.currentPlayer?.id)
+    return null
+  }
+
   console.log('📊 我的統計數據:', myRanking)
-  
+
   return {
-    rank: myRanking.rank,
-    score: myRanking.score,
+    rank: myRanking.rank || 0,
+    score: myRanking.score || 0,
     correctAnswers: myRanking.correctAnswers || 0,
     accuracy: myRanking.accuracy || 0,
     timesAsHost: myRanking.timesAsHost || 0,

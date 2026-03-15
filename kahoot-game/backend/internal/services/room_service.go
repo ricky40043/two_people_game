@@ -19,7 +19,7 @@ type RoomService struct {
 	redisClient *redis.Client
 	gameService *GameService
 	keys        *database.RedisKeys
-	
+
 	// 測試模式用的記憶體存儲
 	memoryRooms map[string]*models.Room
 	memoryMutex sync.RWMutex
@@ -38,17 +38,18 @@ func NewRoomService(redisClient *redis.Client, gameService *GameService) *RoomSe
 // CreateRoom 創建房間
 func (s *RoomService) CreateRoom(hostName string, totalQuestions, questionTimeLimit int) (*models.Room, error) {
 	ctx := context.Background()
-	
+
 	// 生成唯一房間ID
 	roomID := s.generateRoomID()
-	
+
 	// 生成「2種人」題目
 	questions := GetRandomQuestions(totalQuestions)
-	
+
 	// 創建房間
 	room := &models.Room{
 		ID:                roomID,
 		HostName:          hostName,
+		HostConnected:     true,
 		Status:            models.RoomStatusWaiting,
 		Players:           make(map[string]*models.Player),
 		CurrentQuestion:   0,
@@ -57,19 +58,19 @@ func (s *RoomService) CreateRoom(hostName string, totalQuestions, questionTimeLi
 		Questions:         questions,
 		CreatedAt:         time.Now(),
 	}
-	
+
 	// 存儲到 Redis（如果有 Redis 客戶端）或記憶體
 	if s.redisClient != nil {
 		roomData, err := json.Marshal(room)
 		if err != nil {
 			return nil, fmt.Errorf("序列化房間資料失敗: %w", err)
 		}
-		
+
 		err = s.redisClient.Set(ctx, s.keys.RoomKey(roomID), roomData, database.RoomExpiration).Err()
 		if err != nil {
 			return nil, fmt.Errorf("存儲房間資料失敗: %w", err)
 		}
-		
+
 		// 添加到活躍房間列表
 		err = s.redisClient.SAdd(ctx, database.ActiveRoomsKey, roomID).Err()
 		if err != nil {
@@ -81,7 +82,7 @@ func (s *RoomService) CreateRoom(hostName string, totalQuestions, questionTimeLi
 		s.memoryRooms[roomID] = room
 		s.memoryMutex.Unlock()
 	}
-	
+
 	return room, nil
 }
 
@@ -89,31 +90,31 @@ func (s *RoomService) CreateRoom(hostName string, totalQuestions, questionTimeLi
 func (s *RoomService) GetRoom(roomID string) (*models.Room, error) {
 	if s.redisClient != nil {
 		ctx := context.Background()
-		
+
 		roomData, err := s.redisClient.Get(ctx, s.keys.RoomKey(roomID)).Result()
 		if err == redis.Nil {
 			return nil, fmt.Errorf("房間不存在")
 		} else if err != nil {
 			return nil, fmt.Errorf("獲取房間資料失敗: %w", err)
 		}
-		
+
 		var room models.Room
 		err = json.Unmarshal([]byte(roomData), &room)
 		if err != nil {
 			return nil, fmt.Errorf("反序列化房間資料失敗: %w", err)
 		}
-		
+
 		return &room, nil
 	} else {
 		// 測試模式：從記憶體獲取
 		s.memoryMutex.RLock()
 		room, exists := s.memoryRooms[roomID]
 		s.memoryMutex.RUnlock()
-		
+
 		if !exists {
 			return nil, fmt.Errorf("房間不存在")
 		}
-		
+
 		return room, nil
 	}
 }
@@ -121,30 +122,30 @@ func (s *RoomService) GetRoom(roomID string) (*models.Room, error) {
 // AddPlayer 添加玩家到房間
 func (s *RoomService) AddPlayer(roomID, playerID, playerName string) (*models.Player, error) {
 	ctx := context.Background()
-	
+
 	// 獲取房間
 	room, err := s.GetRoom(roomID)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// 檢查房間狀態
 	if room.Status != models.RoomStatusWaiting {
 		return nil, fmt.Errorf("遊戲已開始，無法加入")
 	}
-	
+
 	// 檢查房間人數限制
 	if len(room.Players) >= 20 { // 最大20人
 		return nil, fmt.Errorf("房間已滿")
 	}
-	
+
 	// 檢查玩家名稱是否重複
 	for _, player := range room.Players {
 		if player.Name == playerName {
 			return nil, fmt.Errorf("玩家名稱已存在")
 		}
 	}
-	
+
 	// 創建玩家
 	player := &models.Player{
 		ID:           playerID,
@@ -155,16 +156,16 @@ func (s *RoomService) AddPlayer(roomID, playerID, playerName string) (*models.Pl
 		IsConnected:  true,
 		LastActivity: time.Now(),
 	}
-	
+
 	// 添加玩家到房間
 	room.AddPlayer(player)
-	
+
 	// 更新房間資料
 	err = s.updateRoom(room)
 	if err != nil {
 		return nil, fmt.Errorf("更新房間資料失敗: %w", err)
 	}
-	
+
 	// 存儲玩家資料（如果有 Redis 客戶端）
 	if s.redisClient != nil {
 		playerData, _ := json.Marshal(player)
@@ -173,34 +174,34 @@ func (s *RoomService) AddPlayer(roomID, playerID, playerName string) (*models.Pl
 			return nil, fmt.Errorf("存儲玩家資料失敗: %w", err)
 		}
 	}
-	
+
 	return player, nil
 }
 
 // RemovePlayer 從房間移除玩家
 func (s *RoomService) RemovePlayer(roomID, playerID string) error {
 	ctx := context.Background()
-	
+
 	// 獲取房間
 	room, err := s.GetRoom(roomID)
 	if err != nil {
 		return err
 	}
-	
+
 	// 移除玩家
 	room.RemovePlayer(playerID)
-	
+
 	// 如果房間沒有玩家了，刪除房間
 	if len(room.Players) == 0 {
 		return s.DeleteRoom(roomID)
 	}
-	
+
 	// 更新房間資料
 	err = s.updateRoom(room)
 	if err != nil {
 		return fmt.Errorf("更新房間資料失敗: %w", err)
 	}
-	
+
 	// 刪除玩家資料（如果有 Redis 客戶端）
 	if s.redisClient != nil {
 		err = s.redisClient.Del(ctx, s.keys.PlayerKey(playerID)).Err()
@@ -208,7 +209,7 @@ func (s *RoomService) RemovePlayer(roomID, playerID string) error {
 			return fmt.Errorf("刪除玩家資料失敗: %w", err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -216,13 +217,13 @@ func (s *RoomService) RemovePlayer(roomID, playerID string) error {
 func (s *RoomService) DeleteRoom(roomID string) error {
 	if s.redisClient != nil {
 		ctx := context.Background()
-		
+
 		// 從 Redis 刪除房間資料
 		err := s.redisClient.Del(ctx, s.keys.RoomKey(roomID)).Err()
 		if err != nil {
 			return fmt.Errorf("刪除房間資料失敗: %w", err)
 		}
-		
+
 		// 從活躍房間列表移除
 		err = s.redisClient.SRem(ctx, database.ActiveRoomsKey, roomID).Err()
 		if err != nil {
@@ -234,7 +235,7 @@ func (s *RoomService) DeleteRoom(roomID string) error {
 		delete(s.memoryRooms, roomID)
 		s.memoryMutex.Unlock()
 	}
-	
+
 	return nil
 }
 
@@ -242,12 +243,12 @@ func (s *RoomService) DeleteRoom(roomID string) error {
 func (s *RoomService) updateRoom(room *models.Room) error {
 	if s.redisClient != nil {
 		ctx := context.Background()
-		
+
 		roomData, err := json.Marshal(room)
 		if err != nil {
 			return fmt.Errorf("序列化房間資料失敗: %w", err)
 		}
-		
+
 		err = s.redisClient.Set(ctx, s.keys.RoomKey(room.ID), roomData, database.RoomExpiration).Err()
 		if err != nil {
 			return fmt.Errorf("更新房間資料失敗: %w", err)
@@ -258,7 +259,7 @@ func (s *RoomService) updateRoom(room *models.Room) error {
 		s.memoryRooms[room.ID] = room
 		s.memoryMutex.Unlock()
 	}
-	
+
 	return nil
 }
 
@@ -266,21 +267,21 @@ func (s *RoomService) updateRoom(room *models.Room) error {
 func (s *RoomService) generateRoomID() string {
 	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	const length = 6
-	
+
 	rand.Seed(time.Now().UnixNano())
-	
+
 	for {
 		roomID := make([]byte, length)
 		for i := range roomID {
 			roomID[i] = charset[rand.Intn(len(charset))]
 		}
-		
+
 		// 如果沒有 Redis 客戶端（測試模式），檢查記憶體中是否存在
 		if s.redisClient == nil {
 			s.memoryMutex.RLock()
 			_, exists := s.memoryRooms[string(roomID)]
 			s.memoryMutex.RUnlock()
-			
+
 			if !exists {
 				return string(roomID)
 			}

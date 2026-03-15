@@ -393,18 +393,28 @@ const unwatchGameState = gameStore.$subscribe((_mutation, state) => {
   }
 })
 
-// 更新分數顯示
-const updateScoreGained = () => {
-  // 從最新的分數陣列中找到當前玩家的得分
-  const currentPlayerId = gameStore.currentPlayer?.id
-  if (currentPlayerId && gameStore.scores.length > 0) {
-    const playerScore = gameStore.scores.find(score => score.playerId === currentPlayerId)
-    if (playerScore && playerScore.scoreGained !== undefined) {
-      scoreGained.value = playerScore.scoreGained
-      console.log(`💰 更新得分顯示: ${scoreGained.value} 分`)
+  // 更新分數顯示
+  const updateScoreGained = () => {
+    const currentPlayerId = gameStore.currentPlayer?.id
+    if (currentPlayerId && gameStore.scores.length > 0) {
+      const playerScore = gameStore.scores.find(score => score.playerId === currentPlayerId)
+      if (playerScore) {
+        scoreGained.value = playerScore.scoreGained || 0
+        console.log(`💰 更新得分顯示: ${scoreGained.value} 分`)
+      } else {
+        console.log('⚠️ 找不到當前玩家的分數記錄，嘗試其他方式查找')
+        // 嘗試使用舊的字段名稱
+        const fallbackScore = gameStore.scores.find(score =>
+          score.playerId === currentPlayerId ||
+          score.playerId?.toLowerCase() === currentPlayerId?.toLowerCase()
+        )
+        if (fallbackScore) {
+          scoreGained.value = fallbackScore.scoreGained || 0
+          console.log(`💰 備用方式找到得分: ${scoreGained.value} 分`)
+        }
+      }
     }
   }
-}
 
 // 生命週期
 onMounted(() => {
@@ -415,21 +425,41 @@ onMounted(() => {
     return
   }
   
-  // 如果沒有房間或玩家信息，但有 roomId，嘗試連接 WebSocket
+  // 如果沒有房間或玩家信息，檢查是否有保存的會話
   if (!gameStore.currentRoom || !gameStore.currentPlayer) {
     if (roomId.value) {
-      console.log('🔗 嘗試連接 WebSocket 來獲取房間信息...')
-      if (!socketStore.isConnected) {
-        socketStore.connect()
+      console.log('🔗 沒有遊戲會話，檢查 localStorage...')
+      
+      const savedSession = localStorage.getItem('ricky_game_session')
+      if (savedSession) {
+        try {
+          const session = JSON.parse(savedSession)
+          // 確認是同一個房間
+          if (session.roomId === roomId.value && session.playerId) {
+            console.log('📦 發現保存的會話，嘗試重連...')
+            if (!socketStore.isConnected) {
+              socketStore.connect()
+            }
+            // 給一些時間讓 WebSocket 連接和房間信息同步
+            setTimeout(() => {
+              if (!gameStore.currentRoom || !gameStore.currentPlayer) {
+                console.warn('⚠️ 重連失敗，導向加入頁面')
+                localStorage.removeItem('ricky_game_session')
+                router.push(`/join/${roomId.value}`)
+              }
+            }, 3000)
+            return
+          }
+        } catch (e) {
+          console.error('解析保存的會話失敗:', e)
+        }
       }
       
-      // 給一些時間讓 WebSocket 連接和房間信息同步
-      setTimeout(() => {
-        if (!gameStore.currentRoom || !gameStore.currentPlayer) {
-          console.warn('⚠️ 無法獲取房間信息，可能需要重新加入')
-          // 不強制跳轉，讓用戶看到連接中的畫面
-        }
-      }, 3000)
+      // 沒有有效的會話，導向加入頁面讓使用者輸入名字
+      console.log('⚠️ 沒有有效會話，導向加入頁面')
+      uiStore.showInfo('請先輸入您的暱稱加入遊戲')
+      router.push(`/join/${roomId.value}`)
+      return
     } else {
       uiStore.showError('遊戲資訊不存在，請重新加入')
       router.push('/')

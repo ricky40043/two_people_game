@@ -5,30 +5,22 @@ import { useUIStore } from './ui'
 import { logInfo, logWarn, logError, logDebug, captureError } from '@/utils/logger'
 import type { WebSocketMessage } from '@/types'
 
-const normalizePath = (path: string) => (path.startsWith('/') ? path : `/${path}`)
+
 
 const resolveWebSocketURL = () => {
-  const envUrl = import.meta.env.VITE_WS_URL?.toString().trim()
-  if (envUrl) {
-    return envUrl
+  // 優先使用環境變數（生產環境/Cloud Run 必須設定 VITE_WS_URL）
+  const envWsUrl = import.meta.env.VITE_WS_URL?.toString().trim()
+  if (envWsUrl) {
+    return envWsUrl
   }
 
-  if (typeof window !== 'undefined') {
-    const path = normalizePath(import.meta.env.VITE_WS_PATH?.toString().trim() || '/ws')
+  // Fallback：動態判斷 WebSocket URL（僅限本機開發）
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const host = window.location.hostname
+  const port = import.meta.env.VITE_WS_PORT?.toString().trim() || '8080'
+  const path = import.meta.env.VITE_WS_PATH?.toString().trim() || '/ws'
 
-    if (import.meta.env.DEV) {
-      const protocol = (import.meta.env.VITE_WS_PROTOCOL || (window.location.protocol === 'https:' ? 'wss' : 'ws'))
-        .toString()
-        .replace(/:$/, '')
-      const port = import.meta.env.VITE_WS_PORT?.toString().trim() || '8080'
-      return `${protocol}://${window.location.hostname}:${port}${path}`
-    }
-
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    return `${protocol}//${window.location.host}${path}`
-  }
-
-  return 'ws://127.0.0.1:8080/ws'
+  return `${protocol}://${host}:${port}${path}`
 }
 
 export const useSocketStore = defineStore('socket', () => {
@@ -45,6 +37,16 @@ export const useSocketStore = defineStore('socket', () => {
   const connect = () => {
     shouldReconnect.value = true
     logInfo('WS', '嘗試建立 WebSocket 連線')
+
+    // 如果已有連線，先關閉
+    if (socket.value) {
+      try {
+        socket.value.close()
+      } catch (e) {
+        logWarn('WS', '關閉現有連線時出錯', e)
+      }
+      socket.value = null
+    }
 
     const wsUrl = resolveWebSocketURL()
 
@@ -64,6 +66,25 @@ export const useSocketStore = defineStore('socket', () => {
       isConnected.value = true
       reconnectAttempts.value = 0
       uiStore.showSuccess('連線成功')
+
+      // 檢查是否需要自動重連
+      const savedSession = localStorage.getItem('ricky_game_session')
+      if (savedSession) {
+        try {
+          const session = JSON.parse(savedSession)
+          if (session.roomId && session.playerId) {
+            logInfo('WS', '偵測到現有會話，嘗試自動重連...', { roomId: session.roomId, playerId: session.playerId })
+            // 延遲一下再重連，確保連線穩定
+            setTimeout(() => {
+              if (isConnected.value) {
+                rejoinRoom(session.roomId, session.playerId)
+              }
+            }, 500)
+          }
+        } catch (e) {
+          logError('WS', '解析快取會話失敗', e)
+        }
+      }
     }
 
     socket.value.onclose = (event) => {
@@ -80,25 +101,33 @@ export const useSocketStore = defineStore('socket', () => {
         return
       }
 
-      uiStore.showError('連線已斷開')
-      
-      // 自動重連
+      uiStore.showError('連線已斷開，嘗試重新連線...')
+
+      // 自動重連，指數退避
       if (reconnectAttempts.value < maxReconnectAttempts) {
+        reconnectAttempts.value++
+        const delay = Math.min(2000 * Math.pow(1.5, reconnectAttempts.value - 1), 10000)
+        logInfo('WS', `將在 ${delay}ms 後進行第 ${reconnectAttempts.value} 次自動重連`, {
+          attempt: reconnectAttempts.value,
+          max: maxReconnectAttempts
+        })
+
         setTimeout(() => {
-          reconnectAttempts.value++
-          logInfo('WS', '自動重連', {
-            attempt: reconnectAttempts.value,
-            max: maxReconnectAttempts
-          })
-          connect()
-        }, 2000 * reconnectAttempts.value)
+          // 檢查是否已經重連成功
+          if (!isConnected.value && shouldReconnect.value) {
+            connect()
+          }
+        }, delay)
+      } else {
+        logError('WS', '達到最大重連次數，停止重連')
+        uiStore.showError('無法重新連線，請檢查網路後重新整理頁面')
       }
     }
 
     socket.value.onerror = (error) => {
       captureError('WS', error, { phase: 'runtime' })
-      isConnected.value = false
-      uiStore.showError('WebSocket 連線錯誤')
+      logWarn('WS', 'WebSocket 連線錯誤', error)
+      // 不要在這裡設置 isConnected = false，讓 onclose 處理
     }
 
     socket.value.onmessage = (event) => {
@@ -115,7 +144,7 @@ export const useSocketStore = defineStore('socket', () => {
   // 處理收到的訊息
   const handleMessage = (message: any) => {
     logInfo('WS_RX', `處理訊息 ${message.type}`)
-    
+
     switch (message.type) {
       case 'ROOM_CREATED':
         handleRoomCreated(message.data)
@@ -148,6 +177,7 @@ export const useSocketStore = defineStore('socket', () => {
         handleAnswerSubmitted(message.data)
         break
       case 'PLAYER_ANSWERED':
+        console.log('📨 收到 PLAYER_ANSWERED 訊息:', message.data)
         handlePlayerAnswered(message.data)
         break
       case 'QUESTION_FINISHED':
@@ -165,6 +195,15 @@ export const useSocketStore = defineStore('socket', () => {
       case 'ERROR':
         handleError(message.data)
         break
+      case 'ROOM_CLOSED':
+        handleRoomClosed(message.data)
+        break
+      case 'REJOIN_SUCCESS':
+        handleRejoinSuccess(message.data)
+        break
+      case 'PLAYER_REJOINED':
+        handlePlayerRejoined(message.data)
+        break
       case 'PONG':
         logDebug('WS_RX', '收到 Pong', message.data)
         break
@@ -175,10 +214,45 @@ export const useSocketStore = defineStore('socket', () => {
 
   // 事件處理函數
   const handleRoomCreated = (data: any) => {
-      logInfo('ROOM', '房間創建成功', data)
+    logInfo('ROOM', '房間創建成功', data)
+    gameStore.setRoom({
+      id: data.roomId,
+      hostId: gameStore.currentPlayer?.id || '',
+      hostName: data.hostName,
+      status: 'waiting',
+      players: {},
+      currentQuestion: 0,
+      totalQuestions: data.totalQuestions || 10,
+      questionTimeLimit: data.questionTimeLimit || 30,
+      currentHost: '',
+      timeLeft: 0,
+      questions: [],
+      createdAt: new Date(),
+      roomUrl: data.roomUrl || `${window.location.origin}/join/${data.roomId}`,
+      joinCode: data.joinCode || data.roomId
+    })
+
+    // 保存主持人會話 - 使用後端返回的 clientId
+    if (data.clientId) {
+      localStorage.setItem('ricky_game_session', JSON.stringify({
+        roomId: data.roomId,
+        playerId: data.clientId,
+        playerName: data.hostName,
+        isHost: true
+      }))
+    }
+
+    uiStore.showSuccess('房間創建成功！')
+  }
+
+  const handleHostJoined = (data: any) => {
+    logInfo('HOST', '主持人加入房間', data)
+
+    // 若目前尚未設置房間，初始化一份
+    if (!gameStore.currentRoom) {
       gameStore.setRoom({
         id: data.roomId,
-        hostId: gameStore.currentPlayer?.id || '',
+        hostId: data.clientId,
         hostName: data.hostName,
         status: 'waiting',
         players: {},
@@ -190,106 +264,150 @@ export const useSocketStore = defineStore('socket', () => {
         questions: [],
         createdAt: new Date(),
         roomUrl: data.roomUrl || `${window.location.origin}/join/${data.roomId}`,
-        joinCode: data.joinCode || data.roomId
+        joinCode: data.roomId
       })
-      uiStore.showSuccess('房間創建成功！')
-  }
+    }
 
-  const handleHostJoined = (data: any) => {
-      logInfo('HOST', '主持人加入房間', data)
+    // 確保房間與玩家資料存在
+    if (!gameStore.currentRoom) {
+      logWarn('HOST', '房間尚未初始化，無法設置主持人', data)
+      return
+    }
 
-      // 若目前尚未設置房間，初始化一份
-      if (!gameStore.currentRoom) {
-        gameStore.setRoom({
-          id: data.roomId,
-          hostId: data.clientId,
-          hostName: data.hostName,
-          status: 'waiting',
-          players: {},
-          currentQuestion: 0,
-          totalQuestions: data.totalQuestions || 10,
-          questionTimeLimit: data.questionTimeLimit || 30,
-          currentHost: '',
-          timeLeft: 0,
-          questions: [],
-          createdAt: new Date(),
-          roomUrl: data.roomUrl || `${window.location.origin}/join/${data.roomId}`,
-          joinCode: data.roomId
+    // 更新主持人的玩家資料
+    const hostPlayer = {
+      id: data.clientId,
+      name: data.hostName,
+      roomId: data.roomId,
+      score: 0,
+      isHost: true,
+      isConnected: true,
+      lastActivity: new Date()
+    }
+
+    gameStore.setPlayer(hostPlayer)
+    gameStore.addPlayer(hostPlayer)
+
+    // 保存主持人會話
+    localStorage.setItem('ricky_game_session', JSON.stringify({
+      roomId: data.roomId,
+      playerId: data.clientId,
+      playerName: data.hostName,
+      isHost: true
+    }))
+
+    // 更新房間資訊
+    gameStore.currentRoom.hostId = data.clientId
+    gameStore.currentRoom.hostName = data.hostName
+    gameStore.currentRoom.roomUrl = data.roomUrl || gameStore.currentRoom.roomUrl
+
+    if (data.players && Array.isArray(data.players)) {
+      gameStore.currentRoom.players = {}
+      data.players.forEach((player: any) => {
+        gameStore.addPlayer({
+          id: player.id,
+          name: player.name,
+          roomId: data.roomId,
+          score: player.score || 0,
+          isHost: player.isHost || player.id === data.clientId,
+          isConnected: true,
+          lastActivity: new Date()
         })
-      }
+      })
+    }
 
-      // 確保房間與玩家資料存在
-      if (!gameStore.currentRoom) {
-        logWarn('HOST', '房間尚未初始化，無法設置主持人', data)
-        return
-      }
-
-      // 更新主持人的玩家資料
-      const hostPlayer = {
-        id: data.clientId,
-        name: data.hostName,
-        roomId: data.roomId,
-        score: 0,
-        isHost: true,
-        isConnected: true,
-        lastActivity: new Date()
-      }
-
-      gameStore.setPlayer(hostPlayer)
-      gameStore.addPlayer(hostPlayer)
-
-      // 更新房間資訊
-      gameStore.currentRoom.hostId = data.clientId
-      gameStore.currentRoom.hostName = data.hostName
-      gameStore.currentRoom.roomUrl = data.roomUrl || gameStore.currentRoom.roomUrl
-
-      if (data.players && Array.isArray(data.players)) {
-        gameStore.currentRoom.players = {}
-        data.players.forEach((player: any) => {
-          gameStore.addPlayer({
-            id: player.id,
-            name: player.name,
-            roomId: data.roomId,
-            score: player.score || 0,
-            isHost: player.isHost || player.id === data.clientId,
-            isConnected: true,
-            lastActivity: new Date()
-          })
-        })
-      }
-
-      uiStore.showSuccess('主持人已加入房間')
+    uiStore.showSuccess('主持人已加入房間')
   }
 
   const handlePlayerJoined = (data: any) => {
-      logInfo('PLAYER', '收到玩家加入事件', {
+    logInfo('PLAYER', '收到玩家加入事件', {
+      playerId: data.playerId,
+      playerName: data.playerName,
+      roomId: data.roomId,
+      totalPlayers: data.totalPlayers,
+      playersCount: data.players ? data.players.length : 0
+    })
+
+    // 如果是當前玩家自己加入房間且尚未設置房間
+    if (data.playerId && !gameStore.currentRoom) {
+      // 設置房間信息
+      gameStore.setRoom({
+        id: data.roomId,
+        hostId: '', // 將在獲取完整房間信息時更新
+        hostName: '',
+        status: 'waiting',
+        players: {},
+        currentQuestion: 0,
+        totalQuestions: 10, // 預設值，將在獲取完整信息時更新
+        questionTimeLimit: 30,
+        currentHost: '',
+        timeLeft: 0,
+        questions: [],
+        createdAt: new Date()
+      })
+
+      // 設置當前玩家信息
+      gameStore.setPlayer({
+        id: data.playerId,
+        name: data.playerName,
+        roomId: data.roomId,
+        score: 0,
+        isHost: false,
+        isConnected: true,
+        lastActivity: new Date()
+      })
+
+      logDebug('PLAYER', '設置當前玩家與房間完成', {
+        currentPlayerId: data.playerId,
+        roomId: data.roomId
+      })
+
+      // 保存玩家會話
+      localStorage.setItem('ricky_game_session', JSON.stringify({
+        roomId: data.roomId,
         playerId: data.playerId,
         playerName: data.playerName,
-        roomId: data.roomId,
-        totalPlayers: data.totalPlayers,
-        playersCount: data.players ? data.players.length : 0
+        isHost: false
+      }))
+    }
+
+    // 處理完整玩家列表更新
+    if (data.players && Array.isArray(data.players)) {
+      logDebug('PLAYER', '更新玩家列表', {
+        receivedPlayersCount: data.players.length,
+        currentPlayersCount: Object.keys(gameStore.currentRoom?.players || {}).length
       })
-      
-      // 如果是當前玩家自己加入房間且尚未設置房間
-      if (data.playerId && !gameStore.currentRoom) {
-        // 設置房間信息
-        gameStore.setRoom({
-          id: data.roomId,
-          hostId: '', // 將在獲取完整房間信息時更新
-          hostName: '',
-          status: 'waiting',
-          players: {},
-          currentQuestion: 0,
-          totalQuestions: 10, // 預設值，將在獲取完整信息時更新
-          questionTimeLimit: 30,
-          currentHost: '',
-          timeLeft: 0,
-          questions: [],
-          createdAt: new Date()
+
+      // 清空現有玩家列表（避免重複）
+      if (gameStore.currentRoom) {
+        gameStore.currentRoom.players = {}
+      }
+
+      // 添加所有玩家到房間
+      data.players.forEach((player: any) => {
+        gameStore.addPlayer({
+          id: player.id,
+          name: player.name,
+          roomId: data.roomId,
+          score: player.score || 0,
+          isHost: player.isHost || false,
+          isConnected: true,
+          lastActivity: new Date()
         })
-        
-        // 設置當前玩家信息
-        gameStore.setPlayer({
+
+        logDebug('PLAYER', '添加玩家至列表', {
+          playerId: player.id,
+          playerName: player.name,
+          isHost: player.isHost
+        })
+      })
+      logDebug('PLAYER', '玩家列表更新完成', {
+        finalPlayersCount: Object.keys(gameStore.currentRoom?.players || {}).length
+      })
+    } else {
+      // 如果沒有完整列表，只添加單個玩家
+      if (data.playerId && data.playerName) {
+        gameStore.addPlayer({
           id: data.playerId,
           name: data.playerName,
           roomId: data.roomId,
@@ -298,182 +416,131 @@ export const useSocketStore = defineStore('socket', () => {
           isConnected: true,
           lastActivity: new Date()
         })
-        
-        logDebug('PLAYER', '設置當前玩家與房間完成', {
-          currentPlayerId: data.playerId,
-          roomId: data.roomId
+
+        logDebug('PLAYER', '添加單個玩家', {
+          playerId: data.playerId,
+          playerName: data.playerName
         })
       }
-      
-      // 處理完整玩家列表更新
-      if (data.players && Array.isArray(data.players)) {
-        logDebug('PLAYER', '更新玩家列表', {
-          receivedPlayersCount: data.players.length,
-          currentPlayersCount: Object.keys(gameStore.currentRoom?.players || {}).length
-        })
-        
-        // 清空現有玩家列表（避免重複）
-        if (gameStore.currentRoom) {
-          gameStore.currentRoom.players = {}
-        }
-        
-        // 添加所有玩家到房間
-        data.players.forEach((player: any) => {
-          gameStore.addPlayer({
-            id: player.id,
-            name: player.name,
-            roomId: data.roomId,
-            score: player.score || 0,
-            isHost: player.isHost || false,
-            isConnected: true,
-            lastActivity: new Date()
-          })
-          
-          logDebug('PLAYER', '添加玩家至列表', {
-            playerId: player.id,
-            playerName: player.name,
-            isHost: player.isHost
-          })
-        })
-        logDebug('PLAYER', '玩家列表更新完成', {
-          finalPlayersCount: Object.keys(gameStore.currentRoom?.players || {}).length
-        })
-      } else {
-        // 如果沒有完整列表，只添加單個玩家
-        if (data.playerId && data.playerName) {
-          gameStore.addPlayer({
-            id: data.playerId,
-            name: data.playerName,
-            roomId: data.roomId,
-            score: 0,
-            isHost: false,
-            isConnected: true,
-            lastActivity: new Date()
-          })
-          
-          logDebug('PLAYER', '添加單個玩家', {
-            playerId: data.playerId,
-            playerName: data.playerName
-          })
-        }
-      }
-      
-      uiStore.showSuccess(`${data.playerName} 加入了遊戲`)
+    }
+
+    const name = data.playerName || '玩家'
+    uiStore.showSuccess(`${name} 加入了遊戲`)
   }
 
   const handlePlayerLeft = (data: any) => {
-      logInfo('PLAYER', '玩家離開房間', data)
+    logInfo('PLAYER', '玩家離開房間', data)
 
-      if (Array.isArray(data.players)) {
-        if (gameStore.currentRoom) {
-          gameStore.currentRoom.players = {}
-        }
+    if (Array.isArray(data.players)) {
+      if (gameStore.currentRoom) {
+        gameStore.currentRoom.players = {}
+      }
 
-        data.players.forEach((player: any) => {
-          gameStore.addPlayer({
-            id: player.id,
-            name: player.name,
-            roomId: player.roomId,
-            score: player.score || 0,
-            isHost: player.isHost || false,
-            isConnected: player.isConnected ?? true,
-            lastActivity: player.lastActivity ? new Date(player.lastActivity) : new Date()
-          })
+      data.players.forEach((player: any) => {
+        gameStore.addPlayer({
+          id: player.id,
+          name: player.name,
+          roomId: player.roomId,
+          score: player.score || 0,
+          isHost: player.isHost || false,
+          isConnected: player.isConnected ?? true,
+          lastActivity: player.lastActivity ? new Date(player.lastActivity) : new Date()
         })
-      } else {
-        gameStore.removePlayer(data.playerId)
-      }
+      })
+    } else {
+      gameStore.removePlayer(data.playerId)
+    }
 
-      if (typeof data.currentHost === 'string') {
-        gameStore.setCurrentHost(data.currentHost)
-      }
+    if (typeof data.currentHost === 'string') {
+      gameStore.setCurrentHost(data.currentHost)
+    }
 
-      if (data.resetAnswers) {
-        gameStore.resetPlayerAnswerStatus()
-      }
+    if (data.resetAnswers) {
+      gameStore.resetPlayerAnswerStatus()
+    }
 
-      uiStore.showInfo(`${data.playerName} 離開了遊戲`)
+    uiStore.showInfo(`${data.playerName} 離開了遊戲`)
 
-      if (data.hostChanged) {
-        const newHost = gameStore.getPlayerById(data.currentHost)?.name || '未知'
-        uiStore.showWarning(`主角已更新：${newHost}`)
-      }
+    if (data.hostChanged) {
+      const newHost = gameStore.getPlayerById(data.currentHost)?.name || '未知'
+      uiStore.showWarning(`主角已更新：${newHost}`)
+    }
   }
 
   const handleGameStarted = (data: any) => {
-      logInfo('GAME', '遊戲開始', data)
-      gameStore.setGameState('playing')
-      gameStore.setCurrentHost(data.firstHost)
-      uiStore.showSuccess('遊戲開始！')
+    logInfo('GAME', '遊戲開始', data)
+    gameStore.setGameState('playing')
+    gameStore.setCurrentHost(data.firstHost)
+    uiStore.showSuccess('遊戲開始！')
   }
 
   const handleNewQuestion = (data: any) => {
-      logInfo('QUESTION', '收到新題目', {
-        questionId: data.questionId,
-        currentQuestion: data.currentQuestion,
-        questionIndex: data.questionIndex,
-        hostPlayer: data.hostPlayer,
-        timeLimit: data.timeLimit
-      })
+    logInfo('QUESTION', '收到新題目', {
+      questionId: data.questionId,
+      currentQuestion: data.currentQuestion,
+      questionIndex: data.questionIndex,
+      hostPlayer: data.hostPlayer,
+      timeLimit: data.timeLimit
+    })
 
-      const questionText = data.questionText || data.question
-      if (!questionText) {
-        logError('QUESTION', '題目文字為空', data)
-        uiStore.showError('收到的題目內容為空')
-        return
-      }
+    const questionText = data.questionText || data.question
+    if (!questionText) {
+      logError('QUESTION', '題目文字為空', data)
+      uiStore.showError('收到的題目內容為空')
+      return
+    }
 
-      const questionIndex = data.questionIndex !== undefined ? data.questionIndex : (data.currentQuestion - 1)
+    const questionIndex = data.questionIndex !== undefined ? data.questionIndex : (data.currentQuestion - 1)
 
-      // 重置上一題的答案狀態，避免統計沿用舊資料
-      gameStore.resetPlayerAnswerStatus()
+    // 重置上一題的答案狀態，避免統計沿用舊資料
+    gameStore.resetPlayerAnswerStatus()
 
-      logDebug('QUESTION', '更新題目索引', {
-        beforeIndex: gameStore.currentQuestionIndex,
-        afterIndex: questionIndex,
-        questionsLength: gameStore.questions.length
-      })
-      
-      // 先設置索引，再設置題目內容
-      gameStore.setCurrentQuestionIndex(questionIndex)
-      
-      // 設置當前題目
-      gameStore.setCurrentQuestion({
-        id: data.questionId,
-        questionText: questionText,
-        optionA: data.optionA,
-        optionB: data.optionB,
-        category: data.category || '',
-        timesUsed: 0,
-        isActive: true,
-        createdAt: new Date()
-      })
-      
-      // 設置其他遊戲狀態
-      gameStore.setCurrentHost(data.hostPlayer)
-      gameStore.updateTimeLeft(data.timeLimit)
-      gameStore.setGameState('playing')
-      
-      const currentQuestion = gameStore.currentQuestion
-      logDebug('QUESTION', '驗證題目設置', {
-        hasCurrentQuestion: !!currentQuestion,
-        currentQuestionText: currentQuestion?.questionText,
-        currentQuestionIndex: gameStore.currentQuestionIndex,
-        questionsArrayLength: gameStore.questions.length
-      })
-      
-      // 顯示題目和主角信息
-      const hostPlayerName = gameStore.getPlayerById(data.hostPlayer)?.name || '未知'
-      const questionNumber = data.currentQuestion || (questionIndex + 1)
-      
-      logDebug('QUESTION', '題目設置完成', {
-        questionIndex,
-        questionNumber,
-        hostPlayerName,
-        hasQuestion: !!gameStore.currentQuestion
-      })
-      
-      uiStore.showInfo(`第 ${questionNumber} 題 - 主角：${hostPlayerName}`)
+    logDebug('QUESTION', '更新題目索引', {
+      beforeIndex: gameStore.currentQuestionIndex,
+      afterIndex: questionIndex,
+      questionsLength: gameStore.questions.length
+    })
+
+    // 先設置索引，再設置題目內容
+    gameStore.setCurrentQuestionIndex(questionIndex)
+
+    // 設置當前題目
+    gameStore.setCurrentQuestion({
+      id: data.questionId,
+      questionText: questionText,
+      optionA: data.optionA,
+      optionB: data.optionB,
+      category: data.category || '',
+      timesUsed: 0,
+      isActive: true,
+      createdAt: new Date()
+    })
+
+    // 設置其他遊戲狀態
+    gameStore.setCurrentHost(data.hostPlayer)
+    gameStore.updateTimeLeft(data.timeLimit)
+    gameStore.setGameState('playing')
+
+    const currentQuestion = gameStore.currentQuestion
+    logDebug('QUESTION', '驗證題目設置', {
+      hasCurrentQuestion: !!currentQuestion,
+      currentQuestionText: currentQuestion?.questionText,
+      currentQuestionIndex: gameStore.currentQuestionIndex,
+      questionsArrayLength: gameStore.questions.length
+    })
+
+    // 顯示題目和主角信息
+    const hostPlayerName = gameStore.getPlayerById(data.hostPlayer)?.name || '未知'
+    const questionNumber = data.currentQuestion || (questionIndex + 1)
+
+    logDebug('QUESTION', '題目設置完成', {
+      questionIndex,
+      questionNumber,
+      hostPlayerName,
+      hasQuestion: !!gameStore.currentQuestion
+    })
+
+    uiStore.showInfo(`第 ${questionNumber} 題 - 主角：${hostPlayerName}`)
   }
 
   const handleTimerUpdate = (data: any) => {
@@ -491,8 +558,8 @@ export const useSocketStore = defineStore('socket', () => {
 
     window.timerEvents = window.timerEvents.filter(event => timestamp - event.timestamp < 5000)
 
-    const recentEvents = window.timerEvents.filter(event => 
-      timestamp - event.timestamp < 2000 && 
+    const recentEvents = window.timerEvents.filter(event =>
+      timestamp - event.timestamp < 2000 &&
       event.questionIndex === (data.questionIndex || gameStore.currentQuestionIndex)
     )
 
@@ -524,7 +591,7 @@ export const useSocketStore = defineStore('socket', () => {
   const handleQuestionInvalid = (data: any) => {
     console.log('❌ 題目無效:', data)
     uiStore.showError(data.message || '主角未答題，本題無效')
-    
+
     // 設置遊戲狀態為顯示結果（但不計分）
     gameStore.setGameState('show_result')
   }
@@ -532,14 +599,14 @@ export const useSocketStore = defineStore('socket', () => {
   const handleQuestionSkipped = (data: any) => {
     console.log('⏭️ 題目跳過:', data)
     uiStore.showInfo(data.message || '沒有玩家答題，跳過本題')
-    
+
     // 直接進入下一題準備狀態
     gameStore.setGameState('playing')
   }
 
   const handleAnswerSubmitted = (data: any) => {
     console.log('📝 收到答案提交確認:', data)
-    
+
     // 更新玩家的答案狀態
     const player = gameStore.getPlayerById(data.playerId)
     if (player) {
@@ -548,27 +615,29 @@ export const useSocketStore = defineStore('socket', () => {
         answer: data.answer,
         isHost: data.isHost
       })
-      
+
       console.log(`✅ 已更新玩家 ${data.playerName} 的答案: ${data.answer}`)
     } else {
       console.error('❌ 找不到玩家:', data.playerId)
     }
-    
+
     logDebug('QUESTION', '答案已提交', data)
     uiStore.showSuccess('答案已提交！')
   }
 
   const handlePlayerAnswered = (data: any) => {
     console.log('👥 收到玩家答題通知:', data)
-    
+    console.log('👥 當前房間玩家:', gameStore.currentRoom?.players)
+
     // 更新玩家的答題狀態
     const player = gameStore.getPlayerById(data.playerId)
+    console.log('👥 查詢玩家 ID:', data.playerId, '結果:', player)
     if (player) {
       const updateData: any = {
         hasAnswered: true,
         isHost: data.isHost
       }
-      
+
       // 如果訊息包含答案（主持人能收到），則更新答案
       if (data.answer) {
         updateData.answer = data.answer
@@ -576,7 +645,7 @@ export const useSocketStore = defineStore('socket', () => {
       } else {
         console.log(`👤 玩家 ${data.playerName} 已答題 (不可見答案)`)
       }
-      
+
       gameStore.updatePlayerAnswerStatus(data.playerId, updateData)
     } else {
       console.error('❌ 找不到玩家:', data.playerId)
@@ -590,43 +659,69 @@ export const useSocketStore = defineStore('socket', () => {
 
   const handleScoresUpdate = (data: any) => {
     console.log('📊 === 前端收到分數更新事件 ===')
-    console.log('🎯 主角答案:', data.hostAnswer)
-    console.log('📈 所有玩家分數詳情:')
-    
-    const totalPlayers = Object.keys(gameStore.currentRoom?.players || {}).length
-    const recordedScores = data.scores ? data.scores.length : 0
+    console.log('🎯 完整數據:', JSON.stringify(data, null, 2))
 
-    data.scores?.forEach((score: any, index: number) => {
-      console.log(`   ${index + 1}. ${score.playerName} (ID: ${score.playerId})`)
-      console.log(`      ├─ 總分: ${score.score}`)
-      console.log(`      ├─ 本題得分: ${score.scoreGained}`)
-      console.log(`      └─ 排名: 第${score.rank}名`)
+    const totalPlayers = data.totalPlayers || Object.keys(gameStore.currentRoom?.players || {}).length
+    const answeredCount = data.answeredCount || 0
+    const correctCount = data.correctCount || 0
+
+    console.log(`📈 答題統計: 總玩家=${totalPlayers}, 已作答=${answeredCount}, 答對=${correctCount}`)
+
+    // 確保 scores 是數組
+    if (!data.scores || !Array.isArray(data.scores)) {
+      console.error('❌ 分數數據格式錯誤:', data.scores)
+      logError('SCORE', '分數數據格式錯誤', { scores: data.scores })
+      return
+    }
+
+    const recordedScores = data.scores.length
+
+    data.scores.forEach((score: any, index: number) => {
+      console.log(`   ${index + 1}. ${score.playerName || score.PlayerName} (ID: ${score.playerId || score.PlayerID})`)
+      console.log(`      ├─ 總分: ${score.score || score.Score}`)
+      console.log(`      ├─ 本題得分: ${score.scoreGained || score.scoreGained || 0}`)
+      console.log(`      └─ 排名: 第${score.rank || score.Rank}名`)
     })
 
     logInfo('SCORE', '分數更新', {
       totalPlayers,
       recordedScores,
+      answeredCount,
+      correctCount,
       hostAnswer: data.hostAnswer
     })
 
-    if (recordedScores < totalPlayers) {
+    if (recordedScores < answeredCount) {
       logWarn('SCORE', '答案記錄不完整', {
-        expectedPlayers: totalPlayers,
+        expectedPlayers: answeredCount,
         actualRecords: recordedScores
       })
     }
 
-    gameStore.updateScores(data.scores)
-    
+    // 轉換後端數據格式為前端格式（處理不同的字段名稱）
+    const formattedScores = data.scores.map((score: any) => ({
+      playerId: score.playerId || score.PlayerID,
+      playerName: score.playerName || score.PlayerName,
+      score: score.score !== undefined ? score.score : (score.Score || 0),
+      rank: score.rank !== undefined ? score.rank : (score.Rank || 0),
+      scoreGained: score.scoreGained !== undefined ? score.scoreGained : (score.ScoreGained || 0),
+      correctAnswers: score.correctAnswers || score.correctGuesses || 0,
+      accuracy: score.accuracy !== undefined ? score.accuracy : (score.accuracy || 0),
+      timesAsHost: score.timesAsHost || score.timesAsHost || 0,
+      timesAsGuesser: score.timesAsGuesser || score.timesAsGuesser || 0
+    }))
+
+    gameStore.updateScores(formattedScores, answeredCount, correctCount)
+
     // 切換到分數顯示狀態
     gameStore.setGameState('show_result')
-    
+
     // 顯示本題結果
-    const currentPlayerScore = data.scores.find((s: any) => s.playerId === gameStore.currentPlayer?.id)
+    const currentPlayerScore = data.scores.find((s: any) => s.playerId === gameStore.currentPlayer?.id || s.PlayerID === gameStore.currentPlayer?.id)
     if (currentPlayerScore) {
-      const scoreGained = currentPlayerScore.scoreGained || 0
+      const scoreGained = currentPlayerScore.scoreGained || currentPlayerScore.ScoreGained || 0
       console.log(`💰 當前玩家 ${gameStore.currentPlayer?.name} 本題得分: ${scoreGained}`)
-      
+
       if (scoreGained > 0) {
         uiStore.showSuccess(`獲得 ${scoreGained} 分！`)
       } else {
@@ -635,50 +730,79 @@ export const useSocketStore = defineStore('socket', () => {
     } else {
       console.log('⚠️ 找不到當前玩家的分數記錄')
       console.log('當前玩家ID:', gameStore.currentPlayer?.id)
-      console.log('分數列表中的玩家IDs:', data.scores?.map((s: any) => s.playerId))
+      console.log('分數列表中的玩家IDs:', data.scores?.map((s: any) => s.playerId || s.PlayerID))
     }
-    
+
     // 顯示主角答案
     if (data.hostAnswer) {
       setTimeout(() => {
         uiStore.showInfo(`主角選擇了：${data.hostAnswer}`)
       }, 1000)
     }
-    
+
     console.log('📊 === 前端分數更新處理完成 ===')
   }
 
   const handleGameFinished = (data: any) => {
     console.log('🏁 === 前端收到遊戲結束事件 ===')
-    console.log('📊 最終統計數據:', data.finalStats)
-    console.log('🎮 總題數:', data.totalQuestions)
-    
-    // 轉換新的統計格式為舊的分數格式 (為了兼容現有前端)
-    const finalRanking = data.finalStats?.map((stats: any) => ({
-      playerId: stats.playerId,
-      playerName: stats.playerName,
-      score: stats.totalScore,
-      rank: stats.rank,
-      correctAnswers: stats.correctGuesses,  // 只計算猜測正確次數
-      accuracy: Math.round(stats.guessAccuracy), // 猜測正確率
-      timesAsHost: stats.asHost,
-      timesAsGuesser: stats.asGuesser
-    })) || []
+    console.log('🎯 完整數據:', JSON.stringify(data, null, 2))
+    console.log('🎯 當前玩家ID:', gameStore.currentPlayer?.id)
+
+    // 處理不同的後端數據格式
+    let finalRanking: any[] = []
+
+    if (data.finalStats && Array.isArray(data.finalStats)) {
+      // 新格式：finalStats
+      finalRanking = data.finalStats.map((stats: any) => ({
+        playerId: stats.playerId || stats.PlayerID,
+        playerName: stats.playerName || stats.PlayerName,
+        score: stats.totalScore !== undefined ? stats.totalScore : (stats.Score || stats.score || 0),
+        rank: stats.rank || stats.Rank || 0,
+        correctAnswers: stats.correctGuesses || stats.correctAnswers || stats.CorrectAnswers || 0,
+        accuracy: stats.guessAccuracy !== undefined ? Math.round(stats.guessAccuracy) : (stats.accuracy || stats.Accuracy || 0),
+        timesAsHost: stats.asHost || stats.AsHost || 0,
+        timesAsGuesser: stats.asGuesser || stats.AsGuesser || 0
+      }))
+      console.log('📊 使用 finalStats 格式')
+    } else if (data.finalRanking && Array.isArray(data.finalRanking)) {
+      // 舊格式：finalRanking
+      finalRanking = data.finalRanking.map((stats: any) => ({
+        playerId: stats.playerId || stats.PlayerID,
+        playerName: stats.playerName || stats.PlayerName,
+        score: stats.totalScore !== undefined ? stats.totalScore : (stats.Score || stats.score || 0),
+        rank: stats.rank || stats.Rank || 0,
+        correctAnswers: stats.correctGuesses || stats.correctAnswers || stats.CorrectAnswers || 0,
+        accuracy: stats.guessAccuracy !== undefined ? Math.round(stats.guessAccuracy) : (stats.accuracy || stats.Accuracy || 0),
+        timesAsHost: stats.asHost || stats.AsHost || 0,
+        timesAsGuesser: stats.asGuesser || stats.AsGuesser || 0
+      }))
+      console.log('📊 使用 finalRanking 格式')
+    } else {
+      console.error('❌ 遊戲結束數據格式錯誤:', data)
+      logError('GAME', '遊戲結束數據格式錯誤', { data })
+      return
+    }
+
+    console.log('📊 最終排名數據:')
+    finalRanking.forEach((player: any, index: number) => {
+      console.log(`   ${index + 1}. ${player.playerName} (ID: ${player.playerId}) - ${player.score} 分 (答對 ${player.correctAnswers} 題)`)
+    })
 
     logInfo('GAME', '遊戲結束', {
-      finalStatsCount: data.finalStats?.length ?? 0,
+      finalStatsCount: finalRanking.length,
       totalQuestions: data.totalQuestions
     })
 
+    // 更新遊戲狀態和分數
     gameStore.setGameState('finished')
     gameStore.updateScores(finalRanking)
-    
+
     // 顯示遊戲結束信息
     const winnerName = finalRanking[0]?.playerName || '未知'
     uiStore.showSuccess(`遊戲結束！恭喜 ${winnerName} 獲勝！`)
-    
+
     console.log('🏁 === 前端遊戲結束處理完成 ===')
-    
+
     // 不自動清理，等待用戶操作
     logDebug('GAME', '等待玩家操作清理')
   }
@@ -686,6 +810,83 @@ export const useSocketStore = defineStore('socket', () => {
   const handleError = (data: any) => {
     logError('WS_RX', '伺服器返回錯誤', data)
     uiStore.showError(data.message)
+
+    // 如果是找不到房間或玩家，清除會話
+    if (data.code === 'ROOM_NOT_FOUND' || data.code === 'PLAYER_NOT_FOUND') {
+      localStorage.removeItem('ricky_game_session')
+    }
+  }
+
+  const handleRoomClosed = (data: any) => {
+    logWarn('ROOM', '房間已關閉', data)
+    uiStore.showWarning(data.reason || '房間已關閉')
+    localStorage.removeItem('ricky_game_session')
+    gameStore.resetGame()
+    window.location.href = '/' // 強制回到首頁
+  }
+
+  const handleRejoinSuccess = (data: any) => {
+    logInfo('ROOM', '重連成功', data)
+
+    // 從 session 獲取 isHost 狀態
+    const savedSession = localStorage.getItem('ricky_game_session')
+    let isHost = false
+    try {
+      if (savedSession) {
+        const session = JSON.parse(savedSession)
+        isHost = session.isHost || false
+      }
+    } catch (e) {
+      console.error('解析 session 失敗', e)
+    }
+
+    // 恢復房間狀態
+    gameStore.setRoom({
+      id: data.roomId,
+      hostId: '',
+      hostName: '',
+      status: data.roomStatus || data.gameState,
+      players: {},
+      currentQuestion: data.currentQuestion,
+      totalQuestions: data.totalQuestions,
+      questionTimeLimit: 30,
+      currentHost: '',
+      timeLeft: 0,
+      questions: [],
+      createdAt: new Date()
+    })
+
+    // 恢復玩家狀態
+    gameStore.setPlayer({
+      id: data.playerId,
+      name: data.playerName,
+      roomId: data.roomId,
+      score: data.score || 0,
+      isHost: isHost,
+      isConnected: true,
+      lastActivity: new Date()
+    })
+
+    // 更新玩家列表
+    if (data.players) {
+      handlePlayerJoined({ players: data.players, roomId: data.roomId })
+    }
+
+    uiStore.showSuccess('欢迎回来，連線已恢復！')
+  }
+
+  const handlePlayerRejoined = (data: any) => {
+    logInfo('PLAYER', '其他玩家重連', data)
+    if (data.players) {
+      handlePlayerJoined({
+        players: data.players,
+        roomId: data.roomId,
+        playerName: data.playerName,
+        playerId: data.playerId
+      })
+    }
+    const name = data.playerName || '玩家'
+    uiStore.showInfo(`${name} 已恢復連線`)
   }
 
   // 發送消息
@@ -728,6 +929,43 @@ export const useSocketStore = defineStore('socket', () => {
     })
   }
 
+  // 重連房間 - 如果是主持人，發送 JOIN_AS_HOST
+  const rejoinRoom = (roomId: string, playerId: string) => {
+    // 從 session 獲取 isHost 狀態
+    const savedSession = localStorage.getItem('ricky_game_session')
+    let isHost = false
+    try {
+      if (savedSession) {
+        const session = JSON.parse(savedSession)
+        isHost = session.isHost || false
+      }
+    } catch (e) {
+      console.error('解析 session 失敗', e)
+    }
+
+    if (isHost) {
+      // 主持人重連
+      logInfo('WS_TX', '送出 JOIN_AS_HOST 指令', { roomId, playerId })
+      sendMessage({
+        type: 'JOIN_AS_HOST',
+        data: {
+          roomId,
+          hostName: '' // 會從 session 获取
+        }
+      })
+    } else {
+      // 玩家重連
+      logInfo('WS_TX', '送出 REJOIN_ROOM 指令', { roomId, playerId })
+      sendMessage({
+        type: 'REJOIN_ROOM',
+        data: {
+          roomId,
+          playerId
+        }
+      })
+    }
+  }
+
   // 開始遊戲
   const startGame = (roomId: string) => {
     logInfo('WS_TX', '送出 START_GAME 指令', { roomId })
@@ -756,6 +994,7 @@ export const useSocketStore = defineStore('socket', () => {
   // 離開房間
   const leaveRoom = () => {
     logInfo('WS_TX', '送出 LEAVE_ROOM 指令')
+    localStorage.removeItem('ricky_game_session')
     sendMessage({
       type: 'LEAVE_ROOM',
       data: {}
@@ -772,12 +1011,12 @@ export const useSocketStore = defineStore('socket', () => {
 
   // 遊戲結束後清理資源
   const cleanupAfterGame = () => {
-      logInfo('CLEANUP', '開始清理遊戲資源', {
-        hasSocket: !!socket.value,
-        isConnected: isConnected.value,
-        currentRoom: gameStore.currentRoom?.id,
-        currentPlayer: gameStore.currentPlayer?.name
-      })
+    logInfo('CLEANUP', '開始清理遊戲資源', {
+      hasSocket: !!socket.value,
+      isConnected: isConnected.value,
+      currentRoom: gameStore.currentRoom?.id,
+      currentPlayer: gameStore.currentPlayer?.name
+    })
 
     try {
       // 1. 斷開 WebSocket 連接（但保持重連能力）
@@ -789,22 +1028,22 @@ export const useSocketStore = defineStore('socket', () => {
         isConnected.value = false
         logDebug('CLEANUP', 'WebSocket 連接已斷開')
       }
-      
+
       // 2. 清理遊戲狀態
       gameStore.resetGame()
-      
+
       // 3. 清理 UI 狀態
       uiStore.clearAllMessages()
-      
+
       // 4. 清理計時器事件記錄
       if (window.timerEvents) {
         window.timerEvents = []
       }
-      
+
       // 5. 重置重連計數和恢復重連能力
       reconnectAttempts.value = 0
       shouldReconnect.value = true  // 重要：恢復重連能力，允許下次連接
-      
+
       logInfo('CLEANUP', '遊戲資源清理完成', {
         socketClosed: !socket.value,
         gameReset: !gameStore.currentRoom,

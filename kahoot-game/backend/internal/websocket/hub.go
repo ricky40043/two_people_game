@@ -235,6 +235,7 @@ func (h *Hub) handlePlayerLeave(client *Client) {
 }
 
 // handlePlayerLeaveInternal 處理玩家離開（內部調用，已持有鎖）
+// 改為標記玩家離線而非移除，讓玩家可以重新連線
 func (h *Hub) handlePlayerLeaveInternal(client *Client) {
 	if client.RoomID == "" || client.PlayerName == "" {
 		return
@@ -244,52 +245,23 @@ func (h *Hub) handlePlayerLeaveInternal(client *Client) {
 
 	roomClients := h.rooms[client.RoomID]
 
-	// 從房間服務中移除玩家
-	if err := h.roomService.RemovePlayer(client.RoomID, client.ID); err != nil {
-		log.Printf("❌ 移除玩家失敗: %v", err)
-		return
-	}
-
-	// 獲取更新後的房間資訊
+	// 獲取房間資料
 	room, err := h.roomService.GetRoom(client.RoomID)
 	if err != nil {
 		log.Printf("❌ 獲取房間資訊失敗: %v", err)
-
-		// 房間可能已被清空，仍需通知其他客戶端
-		leaveMsg := Message{
-			Type: "PLAYER_LEFT",
-			Data: map[string]interface{}{
-				"playerId":     client.ID,
-				"playerName":   client.PlayerName,
-				"totalPlayers": 0,
-				"players":      []*models.Player{},
-				"currentHost":  "",
-				"hostChanged":  false,
-				"resetAnswers": true,
-			},
-		}
-
-		if msgBytes, marshalErr := json.Marshal(leaveMsg); marshalErr == nil {
-			h.broadcastToRoomExclude(client.RoomID, msgBytes, client)
-		}
-
-		// 通知遊戲結束
-		if len(roomClients) > 0 {
-			finishMsg := Message{
-				Type: "GAME_FINISHED",
-				Data: map[string]interface{}{
-					"message": "所有玩家已離開，遊戲結束",
-				},
-			}
-			if msgBytes, marshalErr := json.Marshal(finishMsg); marshalErr == nil {
-				h.broadcastToRoomExclude(client.RoomID, msgBytes, nil)
-			}
-		}
-
 		return
 	}
 
-	// 清除離開玩家的答案
+	// 標記玩家為離線，而非移除，這樣玩家可以重新連線
+	if player, exists := room.Players[client.ID]; exists {
+		player.IsConnected = false
+		log.Printf("👋 玩家 %s 標記為離線，分數保留: %d", client.PlayerName, player.Score)
+		h.roomService.UpdateRoom(room)
+	} else {
+		log.Printf("⚠️ 找不到玩家 %s", client.ID)
+	}
+
+	// 清除離開玩家的答案（因為他們斷線了，不能計分）
 	if room.Answers != nil {
 		delete(room.Answers, client.ID)
 	}

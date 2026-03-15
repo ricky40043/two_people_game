@@ -13,6 +13,8 @@ export const useGameStore = defineStore('game', () => {
   const timeLeft = ref(0)
   const currentHost = ref<string | null>(null)
   const isHost = ref(false)
+  const answeredCount = ref(0)   // 本題作答人數
+  const correctCount = ref(0)   // 本題答對人數
 
   // 計算屬性
   const currentQuestion = computed(() => {
@@ -110,7 +112,7 @@ export const useGameStore = defineStore('game', () => {
     gameState.value = state
   }
 
-  const updateScores = (newScores: ScoreInfo[]) => {
+  const updateScores = (newScores: ScoreInfo[], answered?: number, correct?: number) => {
     // 確保 newScores 是一個有效的數組
     if (Array.isArray(newScores)) {
       scores.value = newScores
@@ -118,6 +120,14 @@ export const useGameStore = defineStore('game', () => {
     } else {
       console.error('❌ updateScores 接收到無效的數組:', newScores)
       scores.value = [] // 設置為空數組避免錯誤
+    }
+    
+    // 更新答題統計
+    if (answered !== undefined) {
+      answeredCount.value = answered
+    }
+    if (correct !== undefined) {
+      correctCount.value = correct
     }
   }
 
@@ -229,6 +239,8 @@ export const useGameStore = defineStore('game', () => {
     isMyTurn,
     getCurrentHostPlayer,
     answeredPlayersCount,
+    answeredCount,
+    correctCount,
 
     // 動作
     setRoom,

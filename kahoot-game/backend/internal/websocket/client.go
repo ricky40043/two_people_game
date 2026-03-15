@@ -10,8 +10,8 @@ import (
 	"kahoot-game/internal/models"
 	"kahoot-game/internal/services"
 
-	"github.com/gorilla/websocket"
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -139,7 +139,7 @@ func (c *Client) writePump() {
 			if err := w.Close(); err != nil {
 				return
 			}
-			
+
 			// 處理隊列中的其他訊息（每個消息單獨發送）
 			n := len(c.send)
 			for i := 0; i < n; i++ {
@@ -174,6 +174,8 @@ func (c *Client) handleMessage(msg *Message) {
 		c.handleJoinRoom(msg.Data)
 	case "JOIN_AS_HOST":
 		c.handleJoinAsHost(msg.Data)
+	case "REJOIN_ROOM":
+		c.handleRejoinRoom(msg.Data)
 	case "START_GAME":
 		c.handleStartGame(msg.Data)
 	case "SUBMIT_ANSWER":
@@ -217,19 +219,35 @@ func (c *Client) handleCreateRoom(data interface{}) {
 	c.PlayerName = hostName
 	c.RoomID = room.ID
 	c.IsHost = true
+	c.ID = c.ID // 確保 client ID 已設置
+
+	// 將主持人添加為玩家
+	hostPlayer, err := c.hub.roomService.AddPlayer(room.ID, c.ID, hostName)
+	if err != nil {
+		log.Printf("❌ 添加主持人失敗: %v", err)
+	} else {
+		hostPlayer.IsHost = true
+		// 重新獲取房間確保數據更新
+		room, _ = c.hub.roomService.GetRoom(room.ID)
+		if room != nil {
+			c.hub.roomService.UpdateRoom(room)
+		}
+		log.Printf("✅ 主持人已添加為玩家: %s (ID: %s)", hostName, c.ID)
+	}
 
 	// 將客戶端加入房間
 	c.hub.AddClientToRoom(c, room.ID)
 
 	// 生成房間 URL（根據配置調整）
 	roomUrl := c.hub.BuildJoinURL(room.ID)
-	
+
 	// 發送房間創建成功訊息
 	response := Message{
 		Type: "ROOM_CREATED",
 		Data: map[string]interface{}{
 			"roomId":            room.ID,
 			"hostName":          hostName,
+			"clientId":          c.ID, // 返回 clientId 作為 playerId
 			"totalQuestions":    totalQuestions,
 			"questionTimeLimit": questionTimeLimit,
 			"roomUrl":           roomUrl,
@@ -318,8 +336,8 @@ func (c *Client) handleJoinAsHost(data interface{}) {
 	roomID, _ := dataMap["roomId"].(string)
 	hostName, _ := dataMap["hostName"].(string)
 
-	if roomID == "" || hostName == "" {
-		c.sendError("INVALID_ROOM_DATA", "房間ID和主持人名稱不能為空")
+	if roomID == "" {
+		c.sendError("INVALID_ROOM_DATA", "房間ID不能為空")
 		return
 	}
 
@@ -331,6 +349,11 @@ func (c *Client) handleJoinAsHost(data interface{}) {
 		return
 	}
 
+	// 如果沒有提供 hostName，從房間數據獲取
+	if hostName == "" {
+		hostName = room.HostName
+	}
+
 	// 設定客戶端資訊
 	c.PlayerName = hostName
 	c.RoomID = roomID
@@ -339,16 +362,18 @@ func (c *Client) handleJoinAsHost(data interface{}) {
 	// 將客戶端加入房間
 	c.hub.AddClientToRoom(c, roomID)
 
+	log.Printf("✅ 主持人 %s 加入房間 %s", hostName, roomID)
+
 	// 發送加入成功訊息
 	roomUrl := c.hub.BuildJoinURL(roomID)
 
 	joinResponse := Message{
 		Type: "HOST_JOINED",
 		Data: map[string]interface{}{
-			"clientId":    c.ID,
-			"hostName":    hostName,
-			"roomId":      roomID,
-			"roomUrl":     roomUrl,
+			"clientId":     c.ID,
+			"hostName":     hostName,
+			"roomId":       roomID,
+			"roomUrl":      roomUrl,
 			"totalPlayers": room.GetPlayerCount(),
 			"players":      room.GetPlayerList(),
 		},
@@ -356,6 +381,96 @@ func (c *Client) handleJoinAsHost(data interface{}) {
 	c.sendMessage(&joinResponse)
 
 	log.Printf("🎯 主持人 %s 通過 WebSocket 加入房間 %s", hostName, roomID)
+}
+
+// handleRejoinRoom 處理玩家重新加入房間
+func (c *Client) handleRejoinRoom(data interface{}) {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		c.sendError("INVALID_DATA", "重連資料格式錯誤")
+		return
+	}
+
+	roomID, _ := dataMap["roomId"].(string)
+	playerID, _ := dataMap["playerId"].(string)
+
+	log.Printf("🔄 收到重連請求: roomID=%s, playerID=%s", roomID, playerID)
+
+	if roomID == "" || playerID == "" {
+		c.sendError("INVALID_DATA", "房間ID和玩家ID不能為空")
+		return
+	}
+
+	// 獲取房間
+	room, err := c.hub.roomService.GetRoom(roomID)
+	if err != nil {
+		log.Printf("❌ 房間不存在: %s", roomID)
+		c.sendError("ROOM_NOT_FOUND", "房間不存在或已關閉")
+		return
+	}
+
+	log.Printf("🔍 房間玩家列表: %v", room.Players)
+
+	// 檢查玩家是否在房間中
+	player, exists := room.Players[playerID]
+	if !exists {
+		log.Printf("❌ 玩家不存在: playerID=%s, 現有玩家=%v", playerID, room.Players)
+		c.sendError("PLAYER_NOT_FOUND", "找不到您的玩家記錄，請重新加入")
+		return
+	}
+
+	// 更新客戶端狀態
+	c.ID = playerID
+	c.PlayerName = player.Name
+	c.RoomID = roomID
+	c.IsHost = player.IsHost
+
+	// 更新玩家為在線
+	player.IsConnected = true
+	c.hub.roomService.UpdateRoom(room)
+
+	// 將客戶端加入房間
+	c.hub.AddClientToRoom(c, roomID)
+
+	log.Printf("🔄 玩家 %s (%s) 成功重新加入房間 %s", player.Name, playerID, roomID)
+
+	// 判斷是否需要等待下一題
+	isGameInProgress := room.Status == "question_display" ||
+		room.Status == "show_result" ||
+		room.Status == "answering"
+	waitingForNextQuestion := isGameInProgress
+
+	// 發送重連成功訊息
+	response := Message{
+		Type: "REJOIN_SUCCESS",
+		Data: map[string]interface{}{
+			"playerId":               playerID,
+			"playerName":             player.Name,
+			"roomId":                 roomID,
+			"roomStatus":             room.Status,
+			"gameState":              room.Status,
+			"score":                  player.Score,
+			"players":                room.GetPlayerList(),
+			"currentQuestion":        room.CurrentQuestion,
+			"totalQuestions":         room.TotalQuestions,
+			"waitingForNextQuestion": waitingForNextQuestion,
+			"message":                "重新連線成功！",
+		},
+	}
+	c.sendMessage(&response)
+
+	// 廣播玩家回來了
+	broadcastMsg := Message{
+		Type: "PLAYER_REJOINED",
+		Data: map[string]interface{}{
+			"playerId":   playerID,
+			"playerName": player.Name,
+			"players":    room.GetPlayerList(),
+		},
+	}
+	if msgBytes, err := json.Marshal(broadcastMsg); err == nil {
+		c.hub.BroadcastToRoom(roomID, msgBytes)
+	}
 }
 
 // handleStartGame 處理開始遊戲
@@ -387,12 +502,12 @@ func (c *Client) handleStartGame(data interface{}) {
 		room.Status = models.RoomStatusWaiting
 		room.CurrentQuestion = 0
 		room.Answers = make(map[string]*models.Answer)
-		
+
 		// 重置所有玩家分數
 		for _, player := range room.Players {
 			player.Score = 0
 		}
-		
+
 		// 更新房間狀態
 		err = c.hub.roomService.UpdateRoom(room)
 		if err != nil {
@@ -418,14 +533,14 @@ func (c *Client) handleStartGame(data interface{}) {
 	gameStartMsg := Message{
 		Type: "GAME_STARTED",
 		Data: map[string]interface{}{
-			"roomId":     room.ID,
-			"firstHost":  room.CurrentHost,
+			"roomId":         room.ID,
+			"firstHost":      room.CurrentHost,
 			"totalQuestions": room.TotalQuestions,
 		},
 	}
 
 	log.Printf("🎮 準備廣播 GAME_STARTED: 房間ID=%s, 客戶端房間ID=%s", room.ID, c.RoomID)
-	
+
 	if msgBytes, err := json.Marshal(gameStartMsg); err == nil {
 		log.Printf("🎮 廣播 GAME_STARTED 到房間 %s", c.RoomID)
 		c.hub.BroadcastToRoom(c.RoomID, msgBytes)
@@ -448,20 +563,20 @@ func (c *Client) sendFirstQuestion() {
 	}
 
 	log.Printf("🔍 檢查房間題目: 房間ID=%s, 題目數量=%d, 總題目設定=%d", c.RoomID, len(room.Questions), room.TotalQuestions)
-	
+
 	if len(room.Questions) == 0 {
 		log.Printf("❌ 房間 %s 沒有題目，嘗試重新載入題目", c.RoomID)
-		
+
 		// 嘗試重新載入題目
 		room.Questions = services.GetRandomQuestions(room.TotalQuestions)
 		log.Printf("🔄 重新載入後題目數量: %d", len(room.Questions))
-		
+
 		if len(room.Questions) == 0 {
 			log.Printf("❌ 重新載入題目失敗，無法開始遊戲")
 			c.sendError("NO_QUESTIONS", "無法載入遊戲題目")
 			return
 		}
-		
+
 		// 更新房間
 		err = c.hub.roomService.UpdateRoom(room)
 		if err != nil {
@@ -493,7 +608,7 @@ func (c *Client) sendFirstQuestion() {
 	}
 
 	log.Printf("📝 房間 %s 發送第 %d 題，主角: %s", c.RoomID, room.CurrentQuestion, room.CurrentHost)
-	
+
 	// 只有主持人啟動計時器，避免重複
 	if c.IsHost {
 		go c.startQuestionTimer(room.QuestionTimeLimit)
@@ -506,12 +621,12 @@ func (c *Client) startQuestionTimer(timeLimit int) {
 	if err != nil {
 		return
 	}
-	
+
 	log.Printf("⏰ 計時器啟動: 觸發者=%s, 是否主持人=%t, 房間=%s, 題目=%d", c.PlayerName, c.IsHost, c.RoomID, room.CurrentQuestion)
-	
+
 	// 設置計時器標識，防止重複啟動
 	timerKey := fmt.Sprintf("timer_%s_%d", c.RoomID, room.CurrentQuestion)
-	
+
 	for i := timeLimit; i >= 0; i-- {
 		// 檢查房間狀態，如果已經不在答題狀態就停止計時
 		room, err = c.hub.roomService.GetRoom(c.RoomID)
@@ -519,35 +634,35 @@ func (c *Client) startQuestionTimer(timeLimit int) {
 			log.Printf("⏹️ 計時器停止: 房間狀態改變或錯誤")
 			return
 		}
-		
+
 		// 檢查是否有新題目開始（避免舊計時器繼續）
 		currentTimerKey := fmt.Sprintf("timer_%s_%d", c.RoomID, room.CurrentQuestion)
 		if currentTimerKey != timerKey {
 			log.Printf("⏹️ 計時器停止: 新題目已開始")
 			return
 		}
-		
+
 		// 廣播倒數時間
 		timerMsg := Message{
 			Type: "TIMER_UPDATE",
 			Data: map[string]interface{}{
-				"timeLeft": i,
+				"timeLeft":      i,
 				"questionIndex": room.CurrentQuestion,
 			},
 		}
-		
+
 		if msgBytes, err := json.Marshal(timerMsg); err == nil {
 			c.hub.BroadcastToRoom(c.RoomID, msgBytes)
 		}
-		
+
 		log.Printf("⏱️ 房間 %s 第 %d 題倒數: %d 秒", c.RoomID, room.CurrentQuestion, i)
-		
+
 		// 如果時間到了，處理答題結束
 		if i == 0 {
 			c.handleQuestionTimeout()
 			return
 		}
-		
+
 		time.Sleep(1 * time.Second)
 	}
 }
@@ -558,7 +673,7 @@ func (c *Client) handleQuestionTimeout() {
 	if err != nil {
 		return
 	}
-	
+
 	// 廣播時間結束
 	timeoutMsg := Message{
 		Type: "QUESTION_TIMEOUT",
@@ -566,18 +681,18 @@ func (c *Client) handleQuestionTimeout() {
 			"message": "答題時間結束",
 		},
 	}
-	
+
 	if msgBytes, err := json.Marshal(timeoutMsg); err == nil {
 		c.hub.BroadcastToRoom(c.RoomID, msgBytes)
 	}
-	
+
 	log.Printf("⏰ 房間 %s 第 %d 題答題時間結束", c.RoomID, room.CurrentQuestion)
-	
+
 	// 檢查倒數結束時的答題情況
 	totalPlayers := room.GetPlayerCount()
 	answeredPlayers := 0
 	hostAnswered := false
-	
+
 	if room.Answers != nil {
 		answeredPlayers = len(room.Answers)
 		// 檢查主角是否已答題
@@ -585,9 +700,9 @@ func (c *Client) handleQuestionTimeout() {
 			hostAnswered = true
 		}
 	}
-	
+
 	log.Printf("⏰ 時間結束統計: 總玩家=%d, 已答題=%d, 主角已答題=%t", totalPlayers, answeredPlayers, hostAnswered)
-	
+
 	if answeredPlayers > 0 && hostAnswered {
 		// 主角已答題，可以進行正常計分
 		log.Printf("📊 主角已答題，開始計算分數")
@@ -595,7 +710,7 @@ func (c *Client) handleQuestionTimeout() {
 	} else if answeredPlayers > 0 && !hostAnswered {
 		// 有人答題但主角沒答題，這題無效
 		log.Printf("⚠️ 主角未答題，本題無效，3秒後進入下一題")
-		
+
 		// 廣播主角未答題訊息
 		invalidMsg := Message{
 			Type: "QUESTION_INVALID",
@@ -604,11 +719,11 @@ func (c *Client) handleQuestionTimeout() {
 				"reason":  "host_no_answer",
 			},
 		}
-		
+
 		if msgBytes, err := json.Marshal(invalidMsg); err == nil {
 			c.hub.BroadcastToRoom(c.RoomID, msgBytes)
 		}
-		
+
 		go func() {
 			time.Sleep(3 * time.Second)
 			// 清除答案記錄
@@ -619,7 +734,7 @@ func (c *Client) handleQuestionTimeout() {
 	} else {
 		// 沒人答題，直接進入下一題
 		log.Printf("📊 沒有玩家答題，3秒後進入下一題")
-		
+
 		// 廣播沒人答題訊息
 		noAnswerMsg := Message{
 			Type: "QUESTION_SKIPPED",
@@ -628,11 +743,11 @@ func (c *Client) handleQuestionTimeout() {
 				"reason":  "no_answers",
 			},
 		}
-		
+
 		if msgBytes, err := json.Marshal(noAnswerMsg); err == nil {
 			c.hub.BroadcastToRoom(c.RoomID, msgBytes)
 		}
-		
+
 		go func() {
 			time.Sleep(3 * time.Second)
 			c.handleNextQuestion()
@@ -647,25 +762,30 @@ func (c *Client) handleNextQuestion() {
 		log.Printf("獲取房間錯誤: %v", err)
 		return
 	}
-	
+
 	log.Printf("🔄 準備進入下一題: 當前題目=%d, 總題目=%d, 題庫大小=%d", room.CurrentQuestion, room.TotalQuestions, len(room.Questions))
-	
+
 	// 進入下一題
 	c.hub.gameService.NextTwoTypesQuestion(room)
-	
+
 	log.Printf("🔄 進入下一題後: 當前題目=%d, 總題目=%d, 房間狀態=%s", room.CurrentQuestion, room.TotalQuestions, room.Status)
-	
+
 	// 更新房間狀態
 	err = c.hub.roomService.UpdateRoom(room)
 	if err != nil {
 		log.Printf("更新房間狀態錯誤: %v", err)
 	}
-	
+
 	// 檢查遊戲是否結束
 	if room.Status == models.RoomStatusFinished {
 		// 遊戲結束，發送最終結果 (包含詳細統計)
 		finalStats := c.hub.gameService.GetFinalRanking(room)
-		
+
+		log.Printf("🏁 發送遊戲結束訊息，最終統計:")
+		for i, stat := range finalStats {
+			log.Printf("   %d. %s (ID: %s): %d分, 答對%d題", i+1, stat.PlayerName, stat.PlayerID, stat.TotalScore, stat.CorrectGuesses)
+		}
+
 		gameEndMsg := Message{
 			Type: "GAME_FINISHED",
 			Data: map[string]interface{}{
@@ -674,11 +794,11 @@ func (c *Client) handleNextQuestion() {
 				"totalQuestions": room.TotalQuestions,
 			},
 		}
-		
+
 		if msgBytes, err := json.Marshal(gameEndMsg); err == nil {
 			c.hub.BroadcastToRoom(c.RoomID, msgBytes)
 		}
-		
+
 		log.Printf("🏁 房間 %s 遊戲結束，發送詳細統計給所有玩家", c.RoomID)
 	} else {
 		// 檢查是否還有題目可以發送
@@ -690,7 +810,7 @@ func (c *Client) handleNextQuestion() {
 			// 強制結束遊戲
 			room.Status = models.RoomStatusFinished
 			c.hub.roomService.UpdateRoom(room)
-			
+
 			finalResults := c.hub.gameService.GetFinalRanking(room)
 			gameEndMsg := Message{
 				Type: "GAME_FINISHED",
@@ -699,7 +819,7 @@ func (c *Client) handleNextQuestion() {
 					"message":      "遊戲結束！",
 				},
 			}
-			
+
 			if msgBytes, err := json.Marshal(gameEndMsg); err == nil {
 				c.hub.BroadcastToRoom(c.RoomID, msgBytes)
 			}
@@ -721,7 +841,7 @@ func (c *Client) sendNextQuestion() {
 	}
 
 	log.Printf("🔍 發送題目檢查: 當前題目編號=%d, 題目總數=%d", room.CurrentQuestion, len(room.Questions))
-	
+
 	if room.CurrentQuestion < 1 || room.CurrentQuestion > len(room.Questions) {
 		log.Printf("❌ 題目編號超出範圍: %d (總共 %d 題)", room.CurrentQuestion, len(room.Questions))
 		return
@@ -732,7 +852,7 @@ func (c *Client) sendNextQuestion() {
 
 	// 確保房間狀態正確
 	room.Status = models.RoomStatusQuestionDisplay
-	
+
 	// 發送新題目訊息
 	newQuestionMsg := Message{
 		Type: "NEW_QUESTION",
@@ -755,7 +875,7 @@ func (c *Client) sendNextQuestion() {
 	}
 
 	log.Printf("📝 房間 %s 發送第 %d 題，主角: %s", c.RoomID, room.CurrentQuestion, room.CurrentHost)
-	
+
 	// 啟動計時器（移除主持人限制，因為任何客戶端都可能觸發下一題）
 	log.Printf("⏰ 啟動第 %d 題計時器 (觸發者: %s)", room.CurrentQuestion, c.PlayerName)
 	go c.startQuestionTimer(room.QuestionTimeLimit)
@@ -804,12 +924,12 @@ func (c *Client) handleSubmitAnswer(data interface{}) {
 		room.Answers = make(map[string]*models.Answer)
 	}
 	room.Answers[c.ID] = answerRecord
-	
+
 	// 記錄答案提交詳情
 	isHost := c.ID == room.CurrentHost
 	log.Printf("📝 答案記錄: 玩家ID=%s, 玩家名=%s, 答案=%s, 是否主角=%t, 當前主角=%s", c.ID, c.PlayerName, answer, isHost, room.CurrentHost)
 	log.Printf("📊 當前答案總數: %d/%d", len(room.Answers), room.GetPlayerCount())
-	
+
 	// 記錄所有已答題的玩家
 	for playerID, ans := range room.Answers {
 		player, exists := room.GetPlayer(playerID)
@@ -830,9 +950,11 @@ func (c *Client) handleSubmitAnswer(data interface{}) {
 	confirmMsg := Message{
 		Type: "ANSWER_SUBMITTED",
 		Data: map[string]interface{}{
-			"success":  true,
-			"answer":   answer,
-			"timeUsed": timeUsed,
+			"success":    true,
+			"answer":     answer,
+			"timeUsed":   timeUsed,
+			"playerId":   c.ID,
+			"playerName": c.PlayerName,
 		},
 	}
 
@@ -840,38 +962,57 @@ func (c *Client) handleSubmitAnswer(data interface{}) {
 		c.send <- msgBytes
 	}
 
-	// 廣播給其他玩家，告知有人已作答
+	// 廣播給房間內所有人，告知有人已作答
 	// 給主持人發送包含答案的訊息，給其他玩家發送不含答案的訊息
 	roomClients := c.hub.rooms[c.RoomID]
 
+	log.Printf("📡 廣播答題狀態: 房間 %s 有 %d 個客戶端連接", c.RoomID, len(roomClients))
 	for client := range roomClients {
-		if client == c {
-			continue // 跳過答題者本人
-		}
-		
-		var msgData map[string]interface{}
+		log.Printf("  - Client %s: IsHost=%v, PlayerName=%s", client.ID, client.IsHost, client.PlayerName)
+	}
+
+	// 先發送答案給主持人（包含答案）
+	hostFound := false
+	for client := range roomClients {
 		if client.IsHost {
-			// 主持人可以看到所有答案
-			msgData = map[string]interface{}{
+			hostFound = true
+			log.Printf("📤 發送 PLAYER_ANSWERED 給主持人: %s", client.ID)
+			msgData := map[string]interface{}{
 				"playerId":   c.ID,
 				"playerName": c.PlayerName,
 				"isHost":     c.ID == room.CurrentHost,
-				"answer":     answer, // 主持人能看到答案
+				"answer":     answer,
 			}
-		} else {
-			// 其他玩家只能看到已答題狀態
-			msgData = map[string]interface{}{
-				"playerId":   c.ID,
-				"playerName": c.PlayerName,
-				"isHost":     c.ID == room.CurrentHost,
+			broadcastMsg := Message{
+				Type: "PLAYER_ANSWERED",
+				Data: msgData,
 			}
+			if broadcastBytes, err := json.Marshal(broadcastMsg); err == nil {
+				client.send <- broadcastBytes
+			}
+			break
 		}
-		
+	}
+
+	if !hostFound {
+		log.Printf("⚠️ 房間 %s 中找不到主持人客戶端", c.RoomID)
+	}
+
+	// 發送不含答案的訊息給其他玩家
+	for client := range roomClients {
+		if client == c || client.IsHost {
+			continue
+		}
+		log.Printf("📤 發送 PLAYER_ANSWERED 給玩家: %s", client.ID)
+		msgData := map[string]interface{}{
+			"playerId":   c.ID,
+			"playerName": c.PlayerName,
+			"isHost":     c.ID == room.CurrentHost,
+		}
 		broadcastMsg := Message{
 			Type: "PLAYER_ANSWERED",
 			Data: msgData,
 		}
-
 		if broadcastBytes, err := json.Marshal(broadcastMsg); err == nil {
 			client.send <- broadcastBytes
 		}
@@ -890,7 +1031,7 @@ func (c *Client) handleSubmitAnswer(data interface{}) {
 func (c *Client) checkAllPlayersAnswered(room *models.Room) bool {
 	totalPlayers := room.GetPlayerCount()
 	answeredPlayers := len(room.Answers)
-	
+
 	log.Printf("📊 答題進度: %d/%d 玩家已答題", answeredPlayers, totalPlayers)
 	return answeredPlayers >= totalPlayers
 }
@@ -899,54 +1040,75 @@ func (c *Client) checkAllPlayersAnswered(room *models.Room) bool {
 func (c *Client) calculateAndShowResults(room *models.Room) {
 	// 計算分數
 	scores := c.hub.gameService.CalculateTwoTypesScores(room, room.Answers)
-	
+
 	// 更新房間狀態
 	err := c.hub.roomService.UpdateRoom(room)
 	if err != nil {
 		log.Printf("更新房間狀態錯誤: %v", err)
 	}
-	
+
+	// 計算答題統計
+	answeredCount := 0
+	correctCount := 0
+	hostAnswer := c.getHostAnswer(room)
+	playerCount := room.GetPlayerCount() // 玩家數量（不含主持人）
+
+	if room.Answers != nil {
+		answeredCount = len(room.Answers)
+		// 計算猜對主角答案的玩家數量
+		for playerID, answer := range room.Answers {
+			if playerID != room.CurrentHost && answer.Answer == hostAnswer {
+				correctCount++
+			}
+		}
+	}
+
+	log.Printf("📊 答題統計: 玩家數=%d, 作答人數=%d, 答對人數=%d", playerCount, answeredCount, correctCount)
+
 	// 廣播分數結果
 	scoresMsg := Message{
 		Type: "SCORES_UPDATE",
 		Data: map[string]interface{}{
 			"scores":          scores,
 			"currentQuestion": room.CurrentQuestion,
-			"hostAnswer":      c.getHostAnswer(room),
+			"hostAnswer":      hostAnswer,
+			"answeredCount":   answeredCount,
+			"correctCount":    correctCount,
+			"totalPlayers":    playerCount,
 		},
 	}
-	
+
 	if msgBytes, err := json.Marshal(scoresMsg); err == nil {
 		c.hub.BroadcastToRoom(c.RoomID, msgBytes)
 	}
-	
+
 	// 記錄題目歷史
 	c.recordQuestionHistory(room)
-	
+
 	// 延遲5秒後自動進入下一題，讓玩家有時間查看分數
 	go func() {
 		time.Sleep(5 * time.Second)
-		
+
 		// 重新獲取房間狀態（避免併發問題）
 		currentRoom, err := c.hub.roomService.GetRoom(c.RoomID)
 		if err != nil {
 			log.Printf("獲取房間錯誤: %v", err)
 			return
 		}
-		
+
 		// 清除答案記錄，準備下一題
 		currentRoom.Answers = make(map[string]*models.Answer)
-		
+
 		// 先更新房間狀態
 		err = c.hub.roomService.UpdateRoom(currentRoom)
 		if err != nil {
 			log.Printf("更新房間狀態錯誤: %v", err)
 		}
-		
+
 		log.Printf("🔄 開始處理下一題邏輯...")
 		c.handleNextQuestion()
 	}()
-	
+
 	log.Printf("📊 房間 %s 第 %d 題計分完成，5秒後自動下一題", c.RoomID, room.CurrentQuestion)
 }
 
@@ -956,7 +1118,7 @@ func (c *Client) recordQuestionHistory(room *models.Room) {
 		log.Printf("⚠️ 沒有答案記錄，跳過歷史記錄")
 		return
 	}
-	
+
 	// 找到主角答案
 	hostAnswer := ""
 	for playerID, answer := range room.Answers {
@@ -965,7 +1127,7 @@ func (c *Client) recordQuestionHistory(room *models.Room) {
 			break
 		}
 	}
-	
+
 	// 創建題目歷史記錄
 	history := models.QuestionHistory{
 		QuestionID:    room.Questions[room.CurrentQuestion-1].ID,
@@ -974,7 +1136,7 @@ func (c *Client) recordQuestionHistory(room *models.Room) {
 		HostAnswer:    hostAnswer,
 		PlayerAnswers: make(map[string]*models.Answer),
 	}
-	
+
 	// 複製所有玩家答案
 	for playerID, answer := range room.Answers {
 		history.PlayerAnswers[playerID] = &models.Answer{
@@ -989,14 +1151,14 @@ func (c *Client) recordQuestionHistory(room *models.Room) {
 			SubmittedAt:  answer.SubmittedAt,
 		}
 	}
-	
+
 	// 添加到房間歷史
 	if room.GameHistory == nil {
 		room.GameHistory = make([]models.QuestionHistory, 0)
 	}
 	room.GameHistory = append(room.GameHistory, history)
-	
-	log.Printf("📝 記錄第 %d 題歷史: 主角=%s, 答案=%s, 玩家答案數=%d", 
+
+	log.Printf("📝 記錄第 %d 題歷史: 主角=%s, 答案=%s, 玩家答案數=%d",
 		room.CurrentQuestion, room.CurrentHost, hostAnswer, len(history.PlayerAnswers))
 }
 
