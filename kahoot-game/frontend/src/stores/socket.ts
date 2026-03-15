@@ -1079,6 +1079,7 @@ export const useSocketStore = defineStore('socket', () => {
     // 狀態
     isConnected,
     reconnectAttempts,
+    socket, // 導出 socket 以便外部監聽
 
     // 動作
     connect,
