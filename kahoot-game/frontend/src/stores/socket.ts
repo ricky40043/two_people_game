@@ -475,12 +475,19 @@ export const useSocketStore = defineStore('socket', () => {
   }
 
   const handleNewQuestion = (data: any) => {
+    // 檢查房間 ID 是否匹配，避免處理舊房間的訊息
+    if (data.roomId && gameStore.currentRoom?.id && data.roomId !== gameStore.currentRoom.id) {
+      console.warn(`⚠️ 忽略舊房間的題目: 收到 ${data.roomId}, 當前 ${gameStore.currentRoom.id}`)
+      return
+    }
+
     logInfo('QUESTION', '收到新題目', {
       questionId: data.questionId,
       currentQuestion: data.currentQuestion,
       questionIndex: data.questionIndex,
       hostPlayer: data.hostPlayer,
-      timeLimit: data.timeLimit
+      timeLimit: data.timeLimit,
+      roomId: data.roomId
     })
 
     const questionText = data.questionText || data.question

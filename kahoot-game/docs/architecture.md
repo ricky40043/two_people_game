@@ -1,245 +1,563 @@
-# 🏗️ 系統架構設計
+# Kahoot 遊戲系統架構文檔
 
-## 資料庫 Schema 設計
+## 目錄
+1. [系統總覽](#系統總覽)
+2. [前後端架構](#前後端架構)
+3. [Redis 數據結構](#redis-數據結構)
+4. [房間生命週期](#房間生命週期)
+5. [遊戲流程圖](#遊戲流程圖)
+6. [斷線重連邏輯](#斷線重連邏輯)
+7. [WebSocket 訊息流程](#websocket-訊息流程)
+8. [常見問題與解決方案](#常見問題與解決方案)
 
-### Redis 快取結構
+---
 
-#### 房間狀態
+## 系統總覽
+
 ```
-room:{roomId} = {
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              客戶端 (瀏覽器)                                 │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐       │
+│  │ CreateRoom  │  │  JoinRoom   │  │  LobbyView  │  │ GamePlayer  │       │
+│  │   View      │  │   View      │  │             │  │   View      │       │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘       │
+│         │                │                │                │               │
+│         └────────────────┴────────────────┴────────────────┘               │
+│                                    │                                        │
+│                           WebSocket / HTTP                                  │
+└────────────────────────────────────┼────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              伺服器端 (Go + Gin)                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                           HTTP API                                   │   │
+│  │  POST /api/rooms        - 創建房間                                   │   │
+│  │  GET  /api/rooms/:id   - 獲取房間信息                               │   │
+│  │  DELETE /api/rooms/:id - 刪除房間                                   │   │
+│  │  GET  /api/questions   - 獲取題目                                    │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                      WebSocket Hub (Gorilla)                         │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                │   │
+│  │  │   Client    │  │    Room     │  │   Hub      │                │   │
+│  │  │  Manager    │  │  Manager    │  │            │                │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘                │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│         ┌──────────────────────────┼──────────────────────────┐            │
+│         ▼                          ▼                          ▼            │
+│  ┌─────────────┐          ┌─────────────┐          ┌─────────────┐         │
+│  │   Room      │          │   Game     │          │  Database  │         │
+│  │  Service    │          │  Service   │          │  (Redis)   │         │
+│  └─────────────┘          └─────────────┘          └─────────────┘         │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 前後端架構
+
+### 前端 (Vue 3 + TypeScript + Vite + Pinia)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Vue 3 應用架構                           │
+├─────────────────────────────────────────────────────────────────┤
+│  Views (頁面)                                                    │
+│  ├── HomeView.vue          - 首頁                                │
+│  ├── CreateRoomView.vue   - 創建房間 (主持人)                    │
+│  ├── JoinRoomView.vue     - 加入房間                            │
+│  ├── LobbyView.vue        - 大廳 (等待玩家加入)                   │
+│  ├── GameHostView.vue     - 遊戲控制 (主持人視角)                 │
+│  ├── GamePlayerView.vue   - 玩家答題視角                         │
+│  └── ResultsView.vue      - 遊戲結果                            │
+├─────────────────────────────────────────────────────────────────┤
+│  Stores (狀態管理 - Pinia)                                       │
+│  ├── gameStore.ts         - 遊戲狀態 (房間、分數、題目)           │
+│  ├── socketStore.ts       - WebSocket 連線管理                   │
+│  └── uiStore.ts           - UI 狀態 (載入、提示訊息)             │
+├─────────────────────────────────────────────────────────────────┤
+│  Composables (組合式函數)                                         │
+│  ├── useGameLogic.ts      - 遊戲邏輯封裝                         │
+│  └── useGameTimer.ts     - 計時器管理                            │
+├─────────────────────────────────────────────────────────────────┤
+│  Services (服務)                                                  │
+│  └── api.ts              - HTTP API 調用                         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 後端 (Go + Gin + Gorilla WebSocket)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Go 應用架構                             │
+├─────────────────────────────────────────────────────────────────┤
+│  cmd/main.go               - 入口點                            │
+├─────────────────────────────────────────────────────────────────┤
+│  handlers/ (HTTP / WebSocket 請求處理)                          │
+│  ├── room_handler.go       - 房間 HTTP API                      │
+│  ├── game_handler.go       - 遊戲 HTTP API                      │
+│  ├── question_handler.go  - 題目 HTTP API                       │
+│  └── websocket_handler.go  - WebSocket 升級與連線               │
+├─────────────────────────────────────────────────────────────────┤
+│  websocket/ (WebSocket 核心)                                      │
+│  ├── hub.go                - Hub 管理所有房間和客戶端            │
+│  ├── client.go             - 客戶端連線處理與訊息分發            │
+│  └── messages.go           - 訊息類型定義                        │
+├─────────────────────────────────────────────────────────────────┤
+│  services/ (業務邏輯)                                            │
+│  ├── room_service.go       - 房間管理 (創建、加入、更新)          │
+│  ├── game_service.go       - 遊戲邏輯 (分數計算、排名)           │
+│  └── question_service.go   - 題目管理                            │
+├─────────────────────────────────────────────────────────────────┤
+│  models/ (數據模型)                                               │
+│  └── models.go            - 房間、玩家、題目、分數結構           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Redis 數據結構
+
+### 存儲模式
+
+```redis
+# 房間數據
+room:{roomId} -> JSON(Room 結構)
+
+# 活躍房間列表
+active_rooms -> Set(roomId1, roomId2, ...)
+
+# 玩家 session (可選)
+session:{playerId} -> JSON(PlayerSession)
+```
+
+### Room 結構 (Redis Key: `room:{roomId}`)
+
+```json
+{
   "id": "ABC123",
+  "hostId": "client-uuid-1",
+  "hostName": "主持人名稱",
+  "hostConnected": true,
   "status": "waiting|playing|finished",
-  "hostId": "host_socket_id",
-  "currentQuestion": 0,
-  "totalQuestions": 10,
-  "currentHost": "player_socket_id",
-  "timeLeft": 30,
-  "createdAt": "2024-01-01T00:00:00Z"
-}
-```
-
-#### 玩家狀態
-```
-player:{socketId} = {
-  "id": "socket_id",
-  "name": "玩家暱稱",
-  "roomId": "ABC123",
-  "score": 850,
-  "isHost": false,
-  "isConnected": true,
-  "lastActivity": "2024-01-01T00:00:00Z"
-}
-```
-
-#### 房間玩家列表
-```
-room:{roomId}:players = ["socket_id1", "socket_id2", "socket_id3"]
-```
-
-#### 答題記錄
-```
-question:{roomId}:{questionId} = {
-  "answers": {
-    "socket_id1": {"answer": "A", "time": 5.2, "correct": true},
-    "socket_id2": {"answer": "B", "time": 8.1, "correct": false}
-  },
-  "hostPlayer": "socket_id1"
-}
-```
-
-### PostgreSQL 持久化
-
-#### 遊戲記錄表
-```sql
-CREATE TABLE games (
-    id SERIAL PRIMARY KEY,
-    room_id VARCHAR(10) UNIQUE NOT NULL,
-    total_players INTEGER,
-    total_questions INTEGER,
-    winner_name VARCHAR(50),
-    winner_score INTEGER,
-    duration_seconds INTEGER,
-    created_at TIMESTAMP DEFAULT NOW(),
-    finished_at TIMESTAMP
-);
-```
-
-#### 玩家統計表
-```sql
-CREATE TABLE player_stats (
-    id SERIAL PRIMARY KEY,
-    player_name VARCHAR(50) NOT NULL,
-    game_id INTEGER REFERENCES games(id),
-    final_score INTEGER,
-    correct_answers INTEGER,
-    total_answers INTEGER,
-    avg_response_time DECIMAL(4,2),
-    times_as_host INTEGER,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-#### 題目資料庫
-```sql
-CREATE TABLE questions (
-    id SERIAL PRIMARY KEY,
-    question_text TEXT NOT NULL,
-    option_a VARCHAR(100) NOT NULL,
-    option_b VARCHAR(100) NOT NULL,
-    option_c VARCHAR(100) NOT NULL,
-    option_d VARCHAR(100) NOT NULL,
-    correct_answer CHAR(1) NOT NULL,
-    category VARCHAR(50),
-    difficulty INTEGER DEFAULT 1,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-## WebSocket 訊息格式定義
-
-### 客戶端 → 服務器
-
-#### 加入房間
-```json
-{
-  "type": "JOIN_ROOM",
-  "data": {
-    "roomId": "ABC123",
-    "playerName": "玩家暱稱"
-  }
-}
-```
-
-#### 創建房間
-```json
-{
-  "type": "CREATE_ROOM",
-  "data": {
-    "hostName": "主持人暱稱",
-    "totalQuestions": 10,
-    "questionTime": 30
-  }
-}
-```
-
-#### 開始遊戲
-```json
-{
-  "type": "START_GAME",
-  "data": {
-    "roomId": "ABC123"
-  }
-}
-```
-
-#### 提交答案
-```json
-{
-  "type": "SUBMIT_ANSWER",
-  "data": {
-    "roomId": "ABC123",
-    "questionId": 1,
-    "answer": "A",
-    "timeUsed": 5.2
-  }
-}
-```
-
-### 服務器 → 客戶端
-
-#### 房間狀態更新
-```json
-{
-  "type": "ROOM_UPDATE",
-  "data": {
-    "roomId": "ABC123",
-    "players": [
-      {"id": "socket1", "name": "玩家1", "score": 500},
-      {"id": "socket2", "name": "玩家2", "score": 350}
-    ],
-    "status": "waiting"
-  }
-}
-```
-
-#### 新題目
-```json
-{
-  "type": "NEW_QUESTION",
-  "data": {
-    "questionId": 1,
-    "question": "台灣最高的山是？",
-    "options": ["玉山", "雪山", "大霸尖山", "合歡山"],
-    "hostPlayer": "socket1",
-    "timeLimit": 30
-  }
-}
-```
-
-#### 答題結果
-```json
-{
-  "type": "QUESTION_RESULT",
-  "data": {
-    "correctAnswer": "A",
-    "scores": [
-      {"id": "socket1", "name": "玩家1", "score": 650, "gained": 150},
-      {"id": "socket2", "name": "玩家2", "score": 350, "gained": 0}
-    ],
-    "nextHost": "socket2"
-  }
-}
-```
-
-#### 遊戲結束
-```json
-{
-  "type": "GAME_FINISHED",
-  "data": {
-    "finalScores": [
-      {"rank": 1, "name": "玩家1", "score": 1500},
-      {"rank": 2, "name": "玩家2", "score": 1200},
-      {"rank": 3, "name": "玩家3", "score": 800}
-    ],
-    "gameStats": {
-      "totalQuestions": 10,
-      "duration": "5:30",
-      "totalPlayers": 8
+  "players": {
+    "client-uuid-1": {
+      "id": "client-uuid-1",
+      "name": "主持人",
+      "score": 0,
+      "correctAnswers": 0,
+      "isHost": true,
+      "isConnected": true
+    },
+    "client-uuid-2": {
+      "id": "client-uuid-2",
+      "name": "玩家A",
+      "score": 100,
+      "correctAnswers": 3,
+      "isHost": false,
+      "isConnected": true
     }
-  }
+  },
+  "currentQuestion": 1,
+  "totalQuestions": 10,
+  "questionTimeLimit": 30,
+  "currentHost": "client-uuid-1",
+  "timeLeft": 30,
+  "questions": [...],
+  "answers": {...},
+  "gameHistory": [...],
+  "createdAt": "2024-01-01T00:00:00Z",
+  "startedAt": "2024-01-01T00:05:00Z"
 }
 ```
 
-## 🔄 遊戲狀態機
+### 內存模式 (開發/測試)
 
-```
-WAITING (等待玩家)
-    ↓ START_GAME
-PLAYING (遊戲進行中)
-    ├─ QUESTION_DISPLAY (顯示題目)
-    ├─ ANSWERING (答題時間)
-    ├─ SHOW_RESULT (顯示結果)
-    └─ NEXT_QUESTION (下一題) → QUESTION_DISPLAY
-    ↓ GAME_FINISHED
-FINISHED (遊戲結束)
+```go
+// room_service.go
+type RoomService struct {
+    redisClient *redis.Client
+    memoryMutex sync.RWMutex
+    memoryRooms map[string]*models.Room  // 內存緩存
+}
 ```
 
-## 📱 API 端點設計
+---
 
-### REST API
-```
-GET    /api/rooms                    # 獲取活躍房間列表
-POST   /api/rooms                    # 創建新房間
-GET    /api/rooms/{roomId}           # 獲取房間資訊
-DELETE /api/rooms/{roomId}           # 刪除房間
+## 房間生命週期
 
-GET    /api/questions                # 獲取題目列表
-GET    /api/questions/random/{count} # 隨機獲取題目
-
-GET    /api/games/{gameId}/stats     # 獲取遊戲統計
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           房間生命週期                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐         │
+│   │  CREATED │────▶│ WAITING  │────▶│ PLAYING  │────▶│ FINISHED │         │
+│   │  (HTTP)  │     │ (Lobby)  │     │ (遊戲中)  │     │  (結果)   │         │
+│   └──────────┘     └──────────┘     └──────────┘     └──────────┘         │
+│        │                │                │                │                 │
+│        │                │                │                │                 │
+│        ▼                ▼                ▼                ▼                 │
+│   - API 創建房間    - 玩家加入      - 主持人開始     - 顯示結果            │
+│   - 生成 roomId   - 等待中        - 答題循環       - 遊戲結束            │
+│   - 創建題目       - 可以離開      - 可中斷         - 可刪除房間          │
+│                                                                             │
+│   生命周期結束條件：                                                          │
+│   1. 主持人刪除房間 (DELETE /api/rooms/:id)                                  │
+│   2. 房間的所有客戶端斷開連接                                                │
+│   3. 遊戲超時 (可選)                                                        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### WebSocket 端點
+### 狀態詳細說明
+
+| 狀態 | 說明 | 允許操作 |
+|------|------|----------|
+| `waiting` | 房間創建，等待玩家加入 | 加入房間、離開房間、開始遊戲 |
+| `playing` | 遊戲進行中 | 答題、下一題、結束遊戲 |
+| `finished` | 遊戲結束 | 查看結果、刪除房間 |
+
+---
+
+## 遊戲流程圖
+
+### 完整遊戲流程
+
 ```
-ws://localhost:8080/ws/{roomId}      # WebSocket 連線端點
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            遊戲流程圖                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+1. 創建房間 (主持人)
+   ┌─────────────┐
+   │ CreateRoom  │ ──HTTP POST /api/rooms──▶ 伺服器創建房間
+   │   View      │ ◀─── 返回 roomId ───     生成題目、初始化狀態
+   └──────┬──────┘
+          │
+          ▼
+2. 建立 WebSocket 連接
+   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+   │  瀏覽器     │ ───▶ │ WebSocket   │ ───▶ │   Hub      │
+   │  連接 /ws   │      │   升級      │      │  註冊客戶端 │
+   └─────────────┘      └─────────────┘      └──────┬──────┘
+                                                     │
+          ┌────────────────────────────────────────┘
+          ▼
+3. 主持人加入房間
+   ┌─────────────┐
+   │  發送       │ ──JOIN_AS_HOST(roomId, hostName)──▶
+   │  WebSocket  │ ◀──HOST_JOINED─────────────────────
+   │  訊息       │     返回 clientId, players 列表
+   └─────────────┘
+
+4. 玩家加入房間
+   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+   │  JoinRoom   │ ───▶ │  發送      │ ───▶ │  房間     │
+   │   View      │      │ JOIN_ROOM   │      │  添加玩家   │
+   └─────────────┘      └─────────────┘      └──────┬──────┘
+                                                     │
+          ┌────────────────────────────────────────┘
+          ▼
+   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+   │  PLAYER_    │ ───▶ │  廣播      │ ───▶ │  其他玩家   │
+   │  JOINED     │      │ 給房間內所有人 │     │  更新列表   │
+   └─────────────┘      └─────────────┘      └─────────────┘
+
+5. 遊戲開始 (主持人)
+   ┌─────────────┐
+   │  GameHost  │ ──START_GAME──▶ 伺服器
+   │   View     │ ◀──GAME_STARTED── 廣播給所有玩家
+   └──────┬──────┘
+          │
+          ▼
+6. 答題循環 (每題)
+   
+   ┌──────────────────────────────────────────────────────────────────┐
+   │  6.1 主持人發送下一題                                             │
+   │      ──NEXT_QUESTION──▶ 伺服器處理                               │
+   │      ◀──NEW_QUESTION── 廣播給所有玩家                            │
+   │                    包含: questionId, questionText, optionA/B     │
+   └──────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+   ┌──────────────────────────────────────────────────────────────────┐
+   │  6.2 計時器開始 (30秒倒數)                                        │
+   │      ──TIMER_UPDATE──▶ 每秒廣播給所有玩家                        │
+   └──────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+   ┌──────────────────────────────────────────────────────────────────┐
+   │  6.3 玩家提交答案                                                 │
+   │      ──SUBMIT_ANSWER──▶ 伺服器記錄答案                           │
+   │      ◀──ANSWER_SUBMITTED── 確認收到                               │
+   │                                                                     │
+   │      同時: ──PLAYER_ANSWERED──▶ 廣播給主持人和其他玩家           │
+   │                           (主持人可見答案，玩家只見已答)           │
+   └──────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+   ┌──────────────────────────────────────────────────────────────────┐
+   │  6.4 所有玩家答完 或 時間到                                        │
+   │      ──SCORES_UPDATE──▶ 廣播分數結果                             │
+   │                    包含: 每玩家分數、排名、答對人數                │
+   └──────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+   ┌──────────────────────────────────────────────────────────────────┐
+   │  6.5 記錄題目歷史                                                 │
+   │      - 保存答案到 room.GameHistory                                │
+   │      - 更新玩家累計分數                                           │
+   │      - 5秒後自動下一題或主持人手動下一題                          │
+   └──────────────────────────────────────────────────────────────────┘
+          │
+          └───────────────────── 重複 6.1 - 6.5 直到所有題目完成 ──────┘
+          │
+          ▼
+7. 遊戲結束
+   ┌─────────────┐
+   │  ──GAME_    │ ──GAME_FINISHED──▶ 廣播最終排名
+   │   FINISHED  │     包含: finalStats (排名、分數、答對數)
+   └──────┬──────┘
+          │
+          ▼
+   ┌─────────────┐
+   │  Results    │ ── 顯示最終排名、分數、正確率
+   │   View      │
+   └─────────────┘
 ```
+
+---
+
+## 斷線重連邏輯
+
+### 客戶端斷線情況
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           斷線重連流程                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+1. 主持人斷線
+   ┌─────────────┐
+   │  WebSocket  │ ── 檢測到斷線 (ping 超時) ──▶ Hub 移除客戶端
+   │   斷線      │
+   └──────┬──────┘
+          │
+          ▼
+   ┌─────────────┐     ┌─────────────┐
+   │  hostConnected │ = false           │ 房間保持開啟 (不刪除)            │
+   │  房間狀態   │     │  遊戲狀態保留 │
+   │  保留       │     │              │
+   └─────────────┘     └─────────────┘
+          │
+          ▼
+   ┌──────────────────────────────────────────────────────────────────┐
+   │  主持人重新連線                                                    │
+   │  ── WebSocket 重連 ──▶ 發送 JOIN_AS_HOST(roomId, hostName) ──▶  │
+   │    驗證房間存在 ──▶ 恢復客戶端狀態 ──▶ 發送 HOST_JOINED          │
+   └──────────────────────────────────────────────────────────────────┘
+
+2. 玩家斷線
+   ┌─────────────┐
+   │  WebSocket  │ ── 檢測到斷線 ──▶ Hub 移除客戶端
+   │   斷線      │
+   └──────┬──────┘
+          │
+          ▼
+   ┌─────────────┐     ┌─────────────┐
+   │  玩家標記   │     │  如果所有人 │
+   │  isConnected │ = false       │ 都斷線     │
+   │             │     │  房間...   │
+   └─────────────┘     └──────┬──────┘
+          │                   │
+          │                   ▼
+          │            ┌─────────────┐
+          │            │  (取決於    │
+          │            │  遊戲狀態)  │
+          │            └─────────────┘
+          │
+          ▼
+   ┌──────────────────────────────────────────────────────────────────┐
+   │  玩家重新連線                                                    │
+   │  ── WebSocket 重連 ──▶ 檢查 localStorage session ──▶            │
+   │    發送 REJOIN_ROOM(roomId, playerId) ──▶                       │
+   │    驗證玩家存在 ──▶ 恢復客戶端狀態 ──▶ 發送 REJOIN_SUCCESS      │
+   └──────────────────────────────────────────────────────────────────┘
+```
+
+### 重連訊息類型
+
+```go
+// 1. 主持人重新加入
+type JOIN_AS_HOST struct {
+    RoomID   string `json:"roomId"`
+    HostName string `json:"hostName,omitempty"`
+}
+
+// 2. 玩家重新加入
+type REJOIN_ROOM struct {
+    RoomID   string `json:"roomId"`
+    PlayerID string `json:"playerId"`
+}
+
+// 3. 重連成功響應
+type REJOIN_SUCCESS struct {
+    PlayerID     string   `json:"playerId"`
+    PlayerName   string   `json:"playerName"`
+    RoomID       string   `json:"roomId"`
+    Players      []Player `json:"players"`
+    GameStatus   string   `json:"gameStatus"`
+    CurrentQuestion int   `json:"currentQuestion"`
+}
+```
+
+### 斷線處理規則
+
+| 角色 | 斷線後 | 重新連線 | 房間處理 |
+|------|--------|----------|----------|
+| 主持人 | 房間保留，狀態保留 | JOIN_AS_HOST | 恢復遊戲 |
+| 玩家 | 玩家標記離線 | REJOIN_ROOM | 恢復遊戲 |
+| 所有人大離線 | 房間保留 | - | 可重新加入 |
+
+---
+
+## WebSocket 訊息流程
+
+### 訊息格式
+
+```json
+{
+  "type": "MESSAGE_TYPE",
+  "data": { ... }
+}
+```
+
+### 訊息類型總覽
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           WebSocket 訊息類型                                │
+├──────────────────┬──────────────────────────────────────────────────────────┤
+│     客戶端發送   │                      說明                               │
+├──────────────────┼──────────────────────────────────────────────────────────┤
+│ CREATE_ROOM     │ 創建新房間 (主持人)                                      │
+│ JOIN_ROOM        │ 加入房間 (玩家)                                         │
+│ JOIN_AS_HOST     │ 以主持人身份加入 (斷線重連)                             │
+│ REJOIN_ROOM     │ 重新加入房間 (玩家斷線重連)                              │
+│ START_GAME      │ 開始遊戲 (主持人)                                       │
+│ NEXT_QUESTION   │ 下一題 (主持人)                                         │
+│ SUBMIT_ANSWER   │ 提交答案 (玩家)                                         │
+│ LEAVE_ROOM      │ 離開房間                                               │
+└──────────────────┴──────────────────────────────────────────────────────────┘
+
+┌──────────────────┬──────────────────────────────────────────────────────────┤
+│     伺服器發送   │                      說明                               │
+├──────────────────┼──────────────────────────────────────────────────────────┤
+│ ROOM_CREATED    │ 房間創建成功                                            │
+│ HOST_JOINED     │ 主持人加入成功                                           │
+│ PLAYER_JOINED   │ 玩家加入成功 (廣播)                                     │
+│ PLAYER_LEFT     │ 玩家離開 (廣播)                                         │
+│ REJOIN_SUCCESS  │ 重新加入成功                                            │
+│ GAME_STARTED    │ 遊戲開始 (廣播)                                         │
+│ NEW_QUESTION    │ 新題目 (廣播) - 包含 roomId 用於驗證                    │
+│ TIMER_UPDATE    │ 計時器更新 (每秒)                                        │
+│ ANSWER_SUBMITTED│ 答案確認 (發送者)                                       │
+│ PLAYER_ANSWERED │ 玩家已答題 (廣播給主持人和其他人)                        │
+│ SCORES_UPDATE   │ 分數更新 (廣播)                                         │
+│ QUESTION_FINISHED│ 題目結束                                                │
+│ GAME_FINISHED   │ 遊戲結束 (廣播)                                         │
+│ ROOM_CLOSED     │ 房間關閉                                                │
+│ ERROR           │ 錯誤訊息                                                │
+└──────────────────┴──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 常見問題與解決方案
+
+### 1. 房間 ID 不匹配問題
+
+**問題**: 玩家收到新題目，但頁面不更新 (房間 ID 錯誤)
+
+**原因**: 
+- 主持人創建新房間後，舊連接的客戶端可能收到錯誤房間的訊息
+
+**解決方案**:
+- 後端在 NEW_QUESTION 訊息中包含 roomId
+- 前端收到題目時驗證 roomId 是否匹配當前房間
+- 不匹配則忽略該訊息
+
+```typescript
+// socket.ts - handleNewQuestion
+const handleNewQuestion = (data: any) => {
+  // 檢查房間 ID 是否匹配
+  if (data.roomId && gameStore.currentRoom?.id && data.roomId !== gameStore.currentRoom.id) {
+    console.warn(`⚠️ 忽略舊房間的題目: 收到 ${data.roomId}, 當前 ${gameStore.currentRoom.id}`)
+    return
+  }
+  // 正常處理題目...
+}
+```
+
+### 2. 主持人離線後房間關閉
+
+**問題**: 主持人斷線後房間被刪除
+
+**原因**: 沒有區分主持人斷線和房間刪除
+
+**解決方案**:
+- 添加 `HostConnected` 欄位追蹤主持人狀態
+- 主持人斷線只標記為離線，不刪除房間
+- 主持人重新連線後恢復
+
+### 3. 玩家無法重新加入
+
+**問題**: 刷新頁面後無法恢復遊戲狀態
+
+**解決方案**:
+- 使用 localStorage 保存會話信息
+- 實現 REJOIN_ROOM 訊息處理
+- 驗證玩家身份後恢復狀態
+
+### 4. 答題統計不準確
+
+**問題**: 已答題人數顯示錯誤
+
+**原因**: 
+- PLAYER_ANSWERED 只發送給提交者
+- 前端使用錯誤的數據源計算人數
+
+**解決方案**:
+- 廣播 PLAYER_ANSWERED 給房間內所有人
+- 前端從 gameStore.answeredPlayersCount 讀取
+
+### 5. 遊戲結果顯示 0
+
+**問題**: 答對題數顯示為 0
+
+**原因**: 後端發送 correctGuesses，前端期望 correctAnswers
+
+**解決方案**: 
+- 統一字段名稱
+- 前端兼容兩種格式
+
+---
+
+## 附錄：關鍵代碼位置
+
+| 功能 | 後端位置 | 前端位置 |
+|------|----------|----------|
+| 房間創建 | `room_service.go:CreateRoom` | `CreateRoomView.vue` |
+| WebSocket 處理 | `client.go:handle*` | `socket.ts:handle*` |
+| 分數計算 | `game_service.go:CalculateTwoTypesScores` | `socket.ts:handleScoresUpdate` |
+| 題目廣播 | `client.go:sendNextQuestion` | `socket.ts:handleNewQuestion` |
+| 斷線處理 | `client.go:readPump` (unregister) | `socket.ts:handleDisconnect` |
+
+---
+
+*文檔生成時間: 2024*
+*版本: v1.0*

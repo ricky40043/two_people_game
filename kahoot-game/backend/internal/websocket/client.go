@@ -600,6 +600,7 @@ func (c *Client) sendFirstQuestion() {
 			"hostPlayer":      room.CurrentHost,
 			"timeLimit":       room.QuestionTimeLimit,
 			"question":        currentQuestion.QuestionText, // 前端可能使用這個字段
+			"roomId":          room.ID,                      // 幫助客戶端驗證訊息所屬房間
 		},
 	}
 
@@ -867,6 +868,7 @@ func (c *Client) sendNextQuestion() {
 			"hostPlayer":      room.CurrentHost,
 			"timeLimit":       room.QuestionTimeLimit,
 			"question":        currentQuestion.QuestionText, // 前端可能使用這個字段
+			"roomId":          room.ID,                      // 幫助客戶端驗證訊息所屬房間
 		},
 	}
 
