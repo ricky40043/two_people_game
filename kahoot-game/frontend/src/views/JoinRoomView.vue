@@ -217,8 +217,9 @@ watch(showQRScanner, async (newVal) => {
             closeQRScanner()
             uiStore.showSuccess('掃描成功！已自動填入房間代碼')
           },
-          (errorMessage) => {
+          () => {
             // 掃描錯誤，忽略
+            void 0
           }
         )
       } catch (e) {
@@ -301,14 +302,21 @@ const joinRoom = async () => {
     // 發送加入房間請求
     socketStore.joinRoom(form.value.roomId, form.value.playerName)
 
-    // 設置等待跳轉的超時 (縮短到 5 秒)
-    setTimeout(() => {
-      if (isSubmitting.value) {
-        uiStore.showError('加入房間超時，請檢查房間代碼')
-        isSubmitting.value = false
-        uiStore.setLoading(false)
-      }
-    }, 5000) // 5秒超時
+    // 監聽錯誤並立即重置
+    const errorHandler = (event: MessageEvent) => {
+      try {
+        const message = JSON.parse(event.data)
+        if (message.type === 'ERROR') {
+          isSubmitting.value = false
+          uiStore.setLoading(false)
+          socketStore.socket?.removeEventListener('message', errorHandler)
+        }
+        if (message.type === 'PLAYER_JOINED') {
+          socketStore.socket?.removeEventListener('message', errorHandler)
+        }
+      } catch (e) {}
+    }
+    socketStore.socket?.addEventListener('message', errorHandler)
     
   } catch (error) {
     captureError('VIEW_JOIN_ROOM', error, {
