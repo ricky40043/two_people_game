@@ -149,7 +149,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSocketStore } from '@/stores/socket'
 import { useGameStore } from '@/stores/game'
@@ -168,9 +168,17 @@ const props = defineProps<{
   roomId?: string
 }>()
 
-// 監聽 QR 掃描器打開/關閉
-import { watch } from 'vue'
+// 表單數據
+const form = ref({
+  roomId: '',
+  playerName: '玩家A'
+})
 
+const isSubmitting = ref(false)
+const showQRScanner = ref(false)
+let html5QrCode: Html5Qrcode | null = null
+
+// 監聽 QR 掃描器打開/關閉
 watch(showQRScanner, async (newVal) => {
   if (newVal) {
     // 延遲一下讓 DOM 渲染完成
@@ -228,7 +236,6 @@ const form = ref({
 })
 
 const isSubmitting = ref(false)
-const showQRScanner = ref(false)
 
 // 計算屬性
 const canSubmit = computed(() => {
@@ -331,8 +338,6 @@ const startQRScanner = () => {
   showQRScanner.value = true
 }
 
-let html5QrCode: Html5Qrcode | null = null
-
 const closeQRScanner = async () => {
   if (html5QrCode) {
     try {
@@ -343,14 +348,6 @@ const closeQRScanner = async () => {
     }
   }
   showQRScanner.value = false
-}
-
-const mockQRScan = () => {
-  // 模擬掃描到房間代碼
-  const mockRoomId = 'ABC123'
-  form.value.roomId = mockRoomId
-  closeQRScanner()
-  uiStore.showSuccess('掃描成功！已自動填入房間代碼')
 }
 
 // 監聽加入房間成功事件
