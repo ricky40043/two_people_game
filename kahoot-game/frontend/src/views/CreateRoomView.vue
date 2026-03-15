@@ -172,7 +172,7 @@ const uiStore = useUIStore()
 
 // 表單數據
 const form = ref({
-  hostName: '',
+  hostName: '主持人',
   totalQuestions: 10,
   questionTimeLimit: 30
 })
@@ -278,6 +278,10 @@ const createRoom = async () => {
         willForceReconnect: true
       })
     }
+    
+    // 清除舊的會話，避免自動重連到舊房間
+    localStorage.removeItem('ricky_game_session')
+    console.log('🗑️ 清除舊會話，避免自動重連到舊房間')
     
     // 強制重新建立連接，確保是全新的連接
     if (socketStore.isConnected) {
