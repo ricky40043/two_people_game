@@ -229,12 +229,6 @@ watch(showQRScanner, async (newVal) => {
   }
 })
 
-// 表單數據
-const form = ref({
-  roomId: '',
-  playerName: '玩家A'
-})
-
 const isSubmitting = ref(false)
 
 // 計算屬性
