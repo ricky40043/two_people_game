@@ -323,8 +323,17 @@ const joinRoom = async () => {
 }
 
 const startQRScanner = () => {
+  // 檢查是否在 HTTPS 環境或本地環境
+  const isHttps = window.location.protocol === 'https:'
+  const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  
+  if (!isHttps && !isLocalhost) {
+    uiStore.showError('QR 掃描需要在 HTTPS 環境或本地 localhost 下使用')
+    return
+  }
+  
   if (!canUseCamera.value) {
-    uiStore.showError('您的設備不支援相機功能')
+    uiStore.showError('您的設備不支援相機功能，請檢查瀏覽器權限設置')
     return
   }
   showQRScanner.value = true
