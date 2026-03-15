@@ -369,24 +369,6 @@ const unwatchRoom = gameStore.$subscribe((_mutation, state) => {
   }
 })
 
-// 監聽錯誤事件
-socketStore.socket?.addEventListener('message', (event) => {
-  try {
-    const message = JSON.parse(event.data)
-    if (message.type === 'ERROR') {
-      // 如果是加入房間相關的錯誤，重置狀態
-      if (message.data.code === 'ROOM_NOT_FOUND' || 
-          message.data.code === 'JOIN_ROOM_FAILED' ||
-          message.data.message?.includes('玩家名稱')) {
-        isSubmitting.value = false
-        uiStore.setLoading(false)
-      }
-    }
-  } catch (e) {
-    // 忽略解析錯誤
-  }
-})
-
 // 生命週期
 onMounted(() => {
   logInfo('VIEW_JOIN_ROOM', '頁面載入', {
