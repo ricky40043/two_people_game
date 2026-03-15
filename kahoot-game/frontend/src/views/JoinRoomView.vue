@@ -131,12 +131,8 @@
           <p class="text-gray-600 text-sm">將相機對準房間的 QR Code</p>
         </div>
         
-        <div class="bg-gray-100 rounded-xl h-64 flex items-center justify-center mb-4">
-          <div class="text-center">
-            <div class="text-4xl mb-2">📷</div>
-            <div class="text-gray-500">相機預覽區域</div>
-            <div class="text-gray-400 text-sm mt-2">（功能開發中）</div>
-          </div>
+        <div id="qr-reader" class="bg-gray-100 rounded-xl h-64 flex items-center justify-center mb-4 overflow-hidden">
+          <!-- QR Code 掃描器容器 -->
         </div>
         
         <div class="flex space-x-4">
@@ -145,12 +141,6 @@
             class="flex-1 btn bg-gray-500 hover:bg-gray-600"
           >
             取消
-          </button>
-          <button 
-            @click="mockQRScan"
-            class="flex-1 btn btn-primary"
-          >
-            模擬掃描
           </button>
         </div>
       </div>
@@ -165,6 +155,7 @@ import { useSocketStore } from '@/stores/socket'
 import { useGameStore } from '@/stores/game'
 import { useUIStore } from '@/stores/ui'
 import { logInfo, logError, captureError } from '@/utils/logger'
+import { Html5Qrcode } from 'html5-qrcode'
 
 const route = useRoute()
 const router = useRouter()
@@ -177,10 +168,63 @@ const props = defineProps<{
   roomId?: string
 }>()
 
+// 監聽 QR 掃描器打開/關閉
+import { watch } from 'vue'
+
+watch(showQRScanner, async (newVal) => {
+  if (newVal) {
+    // 延遲一下讓 DOM 渲染完成
+    setTimeout(async () => {
+      try {
+        html5QrCode = new Html5Qrcode('qr-reader')
+        await html5QrCode.start(
+          { facingMode: 'environment' },
+          {
+            fps: 10,
+            qrbox: { width: 250, height: 250 }
+          },
+          (decodedText) => {
+            // 掃描成功
+            console.log('QR Code 掃描結果:', decodedText)
+            // 解析 URL 或直接提取房間 ID
+            let roomId = decodedText
+            // 如果是 URL，嘗試提取房間 ID
+            if (decodedText.includes('/join/')) {
+              const match = decodedText.match(/\/join\/([A-Z0-9]+)/i)
+              if (match) {
+                roomId = match[1]
+              }
+            }
+            // 如果是完整 URL，也嘗試從路徑提取
+            if (decodedText.includes('?')) {
+              const urlParams = new URL(decodedText)
+              // 檢查路徑是否包含 roomId
+              const pathMatch = urlParams.pathname.match(/\/join\/([A-Z0-9]+)/i)
+              if (pathMatch) {
+                roomId = pathMatch[1]
+              }
+            }
+            
+            form.value.roomId = roomId.toUpperCase()
+            closeQRScanner()
+            uiStore.showSuccess('掃描成功！已自動填入房間代碼')
+          },
+          (errorMessage) => {
+            // 掃描錯誤，忽略
+          }
+        )
+      } catch (e) {
+        console.error('啟動 QR 掃描器失敗:', e)
+        uiStore.showError('無法啟動相機，請檢查權限')
+      }
+    }, 100)
+  }
+})
+
 // 表單數據
 const form = ref({
   roomId: '',
-  playerName: ''
+  playerName: '玩家A'
 })
 
 const isSubmitting = ref(false)
@@ -287,7 +331,17 @@ const startQRScanner = () => {
   showQRScanner.value = true
 }
 
-const closeQRScanner = () => {
+let html5QrCode: Html5Qrcode | null = null
+
+const closeQRScanner = async () => {
+  if (html5QrCode) {
+    try {
+      await html5QrCode.stop()
+      html5QrCode = null
+    } catch (e) {
+      console.error('關閉 QR 掃描器失敗:', e)
+    }
+  }
   showQRScanner.value = false
 }
 
