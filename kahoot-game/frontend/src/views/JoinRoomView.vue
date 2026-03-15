@@ -90,9 +90,9 @@
         <!-- QR Code 掃描 -->
         <button
           @click="startQRScanner"
-          :disabled="!canUseCamera || isSubmitting"
+          :disabled="isSubmitting"
           class="w-full btn btn-outline py-4"
-          :class="{ 'opacity-50 cursor-not-allowed': !canUseCamera || isSubmitting }"
+          :class="{ 'opacity-50 cursor-not-allowed': isSubmitting }"
         >
           <span class="flex items-center justify-center">
             <span class="text-xl mr-2">📱</span>
@@ -228,8 +228,6 @@ watch(showQRScanner, async (newVal) => {
     }, 100)
   }
 })
-
-const isSubmitting = ref(false)
 
 // 計算屬性
 const canSubmit = computed(() => {
