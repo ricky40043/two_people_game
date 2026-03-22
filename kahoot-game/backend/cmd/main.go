@@ -162,12 +162,13 @@ func setupRoutes(cfg *config.Config, gameHandler *handlers.GameHandler, roomHand
 	router.GET("/ws", wsHandler.HandleWebSocket)
 	router.GET("/ws/:roomId", wsHandler.HandleWebSocketWithRoom)
 
-	// 靜態文件服務 (Cloud Run 需要直接提供靜態檔案)
-	router.Static("/static", "./static")
-	router.StaticFile("/", "./static/index.html")
+	// 靜態文件服務：Vue build 的 assets 從根路徑提供
+	router.Static("/assets", "./static/assets")
+	router.StaticFile("/vite.svg", "./static/vite.svg")
 	router.StaticFile("/favicon.ico", "./static/favicon.ico")
+	router.StaticFile("/", "./static/index.html")
 
-	// 處理 SPA 路由：所有非 API/WebSocket 且未匹配的路由都導向 index.html
+	// SPA fallback：所有非 API/WS 路由都回傳 index.html
 	router.NoRoute(func(c *gin.Context) {
 		c.File("./static/index.html")
 	})

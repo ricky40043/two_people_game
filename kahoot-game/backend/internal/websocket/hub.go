@@ -237,6 +237,22 @@ func (h *Hub) handlePlayerLeave(client *Client) {
 	h.handlePlayerLeaveInternal(client)
 }
 
+// softLeaveRoom 軟離開：標記離線 + 離開房間，但不關閉 WebSocket
+// 用於 LEAVE_ROOM 訊息，讓玩家可以立刻發送新的 JOIN_ROOM
+func (h *Hub) softLeaveRoom(client *Client) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	h.handlePlayerLeaveInternal(client)
+	h.removeClientFromRoom(client, client.RoomID)
+
+	log.Printf("👋 玩家 %s 軟離開房間 %s（連線保持）", client.PlayerName, client.RoomID)
+
+	client.RoomID = ""
+	client.PlayerName = ""
+	client.IsHost = false
+}
+
 // handlePlayerLeaveInternal 處理玩家離開（內部調用，已持有鎖）
 // 改為標記玩家離線而非移除，讓玩家可以重新連線
 func (h *Hub) handlePlayerLeaveInternal(client *Client) {

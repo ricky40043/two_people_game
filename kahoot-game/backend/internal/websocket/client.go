@@ -1325,14 +1325,13 @@ func (c *Client) handleForceEndGame(data interface{}) {
 	}
 }
 
-// handleLeaveRoom 處理離開房間
+// handleLeaveRoom 處理離開房間（軟離開：標記離線，不關閉 WebSocket）
+// 不呼叫 hub.unregister，避免 close(client.send) 導致後續訊息丟失
 func (c *Client) handleLeaveRoom(data interface{}) {
 	if c.RoomID == "" {
 		return
 	}
-
-	// hub.unregister 會處理離開邏輯
-	c.hub.unregister <- c
+	c.hub.softLeaveRoom(c)
 }
 
 // handlePing 處理 ping 訊息

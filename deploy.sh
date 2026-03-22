@@ -74,7 +74,7 @@ deploy() {
     --memory 512Mi \
     --cpu 1 \
     --timeout 3600 \
-    --set-env-vars "ENV=production,PORT=8080" \
+    --set-env-vars "ENV=production" \
     --project "$GCP_PROJECT_ID" \
     --quiet
 

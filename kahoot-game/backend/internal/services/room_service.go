@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"sync"
 	"time"
@@ -134,6 +135,9 @@ func (s *RoomService) AddPlayer(roomID, playerID, playerName string) (*models.Pl
 	}
 
 	// 檢查房間狀態
+	if room.Status == models.RoomStatusFinished {
+		return nil, fmt.Errorf("遊戲已結束，請建立新房間")
+	}
 	if room.Status != models.RoomStatusWaiting {
 		return nil, fmt.Errorf("遊戲已開始，無法加入")
 	}
@@ -143,23 +147,16 @@ func (s *RoomService) AddPlayer(roomID, playerID, playerName string) (*models.Pl
 		return nil, fmt.Errorf("房間已滿")
 	}
 
-	// 檢查玩家名稱是否重複
+	// 待機階段：若有同名非主持人玩家（不論線上或離線），直接踢出讓新玩家全新加入
 	for existingID, existing := range room.Players {
 		if existing.Name == playerName {
-			if !existing.IsConnected {
-				// 同名玩家斷線了 → 視為重連，用新連線 ID 接回來
-				existing.ID = playerID
-				existing.IsConnected = true
-				existing.LastActivity = time.Now()
-				delete(room.Players, existingID)
-				room.Players[playerID] = existing
-				room.LastActivity = time.Now()
-				if err := s.updateRoom(room); err != nil {
-					return nil, fmt.Errorf("更新房間資料失敗: %w", err)
-				}
-				return existing, nil
+			if existing.IsHost {
+				// 主持人名稱不能被佔用
+				return nil, fmt.Errorf("該名稱已被主持人使用")
 			}
-			return nil, fmt.Errorf("玩家名稱已存在")
+			log.Printf("⚠️ 踢出同名玩家 %s (ID: %s)，讓新玩家加入", playerName, existingID)
+			delete(room.Players, existingID)
+			break
 		}
 	}
 

@@ -1023,16 +1023,12 @@ export const useSocketStore = defineStore('socket', () => {
   }
 
   // 離開舊房間的輔助函數（建房/加入前自動呼叫）
+  // 注意：不發送 LEAVE_ROOM，避免觸發 PLAYER_LEFT 廣播導致畫面閃爍
+  // 後端在 AddPlayer 時會自動踢出同名舊玩家
   const leaveOldRoomIfNeeded = () => {
     const savedSession = localStorage.getItem('ricky_game_session')
     if (savedSession) {
-      try {
-        const session = JSON.parse(savedSession)
-        if (session.roomId) {
-          logInfo('WS', '自動離開舊房間', { roomId: session.roomId })
-          sendMessage({ type: 'LEAVE_ROOM', data: { roomId: session.roomId } })
-        }
-      } catch { /* ignore */ }
+      logInfo('WS', '清除舊 session，由後端自動踢出同名玩家')
       localStorage.removeItem('ricky_game_session')
       gameStore.resetGame()
     }
