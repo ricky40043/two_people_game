@@ -189,8 +189,8 @@ func (c *Client) handleMessage(msg *Message) {
 	case "PING":
 		c.handlePing()
 	default:
-		log.Printf("未知訊息類型: %s", msg.Type)
-		c.sendError("UNKNOWN_MESSAGE_TYPE", "未知的訊息類型")
+		log.Printf("未知訊息類型: [%s] from=%s room=%s", msg.Type, c.ID, c.RoomID)
+		c.sendError("UNKNOWN_MESSAGE_TYPE", fmt.Sprintf("未知的訊息類型: %q", msg.Type))
 	}
 }
 
