@@ -1,30 +1,149 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-- 根目錄的 `index.html` 提供遊戲入口，主題遊戲分散於資料夾，例如 `two-player-quiz/`, `guess-number/`, `who-is-spy/` 等，每個資料夾包含對應的 `index.html`, `script.js`, `styles.css`。
-- 公用文件與流程說明位於 `README.md`, `TODO_DEVELOPMENT_PLAN.md`, `FULL_SYSTEM_TEST.md`，部署腳本在 `deploy.sh`。
-- 額外輔助資料（例如大型題庫）固定放在遊戲子資料夾，命名為 `*_complete.js` 以利自動載入。
+This document provides guidelines for AI agents working in this repository.
+
+## Project Structure
+
+- **Root directory**: Static mini-games collection (index.html entry point, games in subfolders like `bomb-topic/`, `guess-number/`, `two-player-quiz/`, `who-is-spy/`)
+- **kahoot-game/**: Kahoot-style multiplayer quiz game
+  - `backend/`: Go 1.21+ backend with Gin + Gorilla WebSocket
+  - `frontend/`: Vue 3 + TypeScript + Vite frontend with Pinia, Vue Router, TailwindCSS
 
 ## Build, Test, and Development Commands
-- `npm run dev`：啟動簡易 Python HTTP 伺服器於 `http://localhost:3000`，用於瀏覽器內測試全部靜態遊戲。
-- `npm run build`：佔位腳本，確認目前不需要額外建置程序；修改部署流程時先更新此腳本。
-- `npm run start`：別名，等同 `npm run dev`，方便平臺型腳本呼叫。
 
-## Coding Style & Naming Conventions
-- JavaScript 與 CSS 皆採四空白縮排，保留分號與尾端逗號，避免多行模板字串中的多餘空白。
-- 檔案命名使用小寫連字號或 snake_case（例如 `question_bank.js`）；大型資料集以 `*_complete.js` 命名。
-- DOM 元素使用語意化 ID/class，例如 `#game-page`, `.option-btn`，並加上註解說明複雜流程。
+### Root Static Games
+```bash
+npm run dev      # Start Python HTTP server at http://localhost:3000
+npm run build    # No build needed for static site
+npm run start    # Alias for npm run dev
+```
 
-## Testing Guidelines
-- 目前未使用自動化測試；調整後請執行 `npm run dev` 並以多個瀏覽器視窗驗證互動、排版與語言顯示。
-- 針對題庫或亂數邏輯，建議於瀏覽器主控台呼叫公開函式（如 `getQuestionsByFilter('medium','all',20)`）檢查結果是否多樣且無重複。
-- 若新增測試框架，請在 `README.md` 與此文件更新執行指令與覆蓋率門檻。
+### Kahoot Frontend (kahoot-game/frontend)
+```bash
+cd kahoot-game/frontend
+npm install              # Install dependencies
+npm run dev              # Start Vite dev server
+npm run build            # Type-check (vue-tsc) + Vite build
+npm run type-check       # Run vue-tsc --noEmit for type checking only
+npm run preview          # Preview production build
+```
+
+### Kahoot Backend (kahoot-game/backend)
+```bash
+cd kahoot-game/backend
+go mod download          # Download Go dependencies
+go run cmd/main.go       # Run backend server
+go build -o server cmd/main.go  # Build binary
+```
+
+## Coding Style
+
+### General
+- 4-space indentation (no tabs)
+- Use semicolons and trailing commas
+- Avoid unnecessary whitespace in template literals
+
+### JavaScript/TypeScript
+- Use ES modules (`import`/`export`)
+- Prefer `const` over `let`, avoid `var`
+- Use TypeScript strict mode; define interfaces for all data structures
+- Vue components use `<script setup lang="ts">` with Composition API
+- Path aliases: `@/*` maps to `src/*` (configured in tsconfig.json)
+- File naming: PascalCase for components (`.vue`), camelCase for utilities (`.ts`)
+- Import ordering: Vue/Router/Pinia imports first, then third-party, then local imports
+
+### Go
+- Standard Go formatting (`gofmt`)
+- Error handling: check errors immediately, return or log with context
+- Use context.Context for cancellation and timeouts
+- Package structure: `internal/` for core logic, `cmd/` for entry points
+- Group imports by type: standard library, third-party, internal packages
+
+### CSS/Tailwind
+- TailwindCSS utility classes for styling
+- Semantic HTML elements with appropriate classes
+- Mobile-first responsive design
+- Avoid custom CSS when Tailwind utility exists
+
+### File Naming
+- **Vue components**: `PascalCase.vue` (e.g., `GamePlayerView.vue`)
+- **TypeScript files**: `camelCase.ts` (e.g., `gameService.ts`)
+- **Go files**: `snake_case.go` (e.g., `room_handler.go`)
+- **Large datasets**: `*_complete.js` pattern for automatic loading
+
+### Vue Component Structure
+```vue
+<template>...</template>
+<script setup lang="ts">
+  // Imports (Vue → Router/Pinia → Third-party → Local)
+  // Types/Interfaces
+  // Props/Emits
+  // Store/composable initialization
+  // Computed properties
+  // Watchers
+  // Lifecycle hooks
+  // Methods
+</script>
+<style scoped>...</style>
+```
+
+### DOM Elements
+- Use semantic IDs/classes (e.g., `#game-page`, `.option-btn`)
+- Add comments for complex logic flows
+
+## Error Handling
+
+- **Frontend**: Use Pinia stores (`useUIStore`) for global error/success messages
+- **Backend**: Return proper HTTP status codes; log errors with context
+- **WebSocket**: Handle connection failures gracefully; implement reconnection logic
+- Go: Always handle errors inline; use `if err != nil { return err }` pattern
+
+## WebSocket Conventions
+
+- Message format: JSON with `type` and `payload` fields
+- Client: Native WebSocket API with Pinia store for state management
+- Server: Gorilla WebSocket with hub pattern for broadcasting
+- Reconnection: Auto-reconnect with exponential backoff on client
+
+## Testing
+
+- No automated tests currently configured
+- Manual testing: Run `npm run dev` and verify in multiple browsers
+- For question banks: Call exposed functions like `getQuestionsByFilter('medium','all',20)` in browser console to verify diversity
+- Test responsive layouts on mobile viewport sizes
 
 ## Commit & Pull Request Guidelines
-- Commit 訊息採「動詞 + 目的」中文或英文簡述（例：`feat: expand global quiz dataset`），保持單一職責並附上影響範圍。
-- PR 描述需列出：變更摘要、測試方式（含指令或手動情境）、相關連結（issue/設計稿）與截圖或錄影（若 UI 變動）。
-- 在提交 PR 前，請自我檢查程式碼風格、資產路徑與部署腳本，確認不含開發中日誌或暫存檔。
 
-## Security & Configuration Tips
-- 本專案為靜態站點，禁止在版本庫內儲存 API 金鑰或使用者資料。
-- 若需外部服務，請以 `.env.local` 於部署平臺設定環境變數，程式碼內僅引用 `process.env` 別名。
+- Commit messages: "verb + purpose" in Chinese or English (e.g., `feat: expand global quiz dataset`)
+- PR description: Include summary, testing instructions, related links, screenshots/videos for UI changes
+- Before PR: Check code style, asset paths, deployment scripts; remove debug logs
+
+## Security
+
+- Never commit API keys or user data
+- Use `.env.local` for local secrets; deploy secrets via platform environment variables
+- Reference secrets via `process.env` in frontend, `os.Getenv` in Go
+- Validate all user inputs on backend
+
+## Environment Configuration
+
+- Frontend: Vite with `import.meta.env` for env vars
+- Backend: `godotenv` for local dev, platform env vars for production
+- Required backend env vars: `DATABASE_URL`, `REDIS_URL`, `PORT`, `CORS_ORIGINS`
+
+## Additional Documentation
+
+- `README.md`: Project overview and deployment guide
+- `TODO_DEVELOPMENT_PLAN.md`: Development roadmap
+- `FULL_SYSTEM_TEST.md`: Testing procedures
+- `SOCKET_FLOW_DOCUMENTATION.md`: WebSocket message flows
+- `kahoot-game/docs/`: Architecture, tech stack, message specs
+
+## Development Workflow
+
+1. Create feature branch from main
+2. Make changes following coding style guidelines
+3. Run `npm run type-check` (frontend) before committing
+4. Test locally with both backend and frontend running
+5. Commit with descriptive message
+6. Push and create PR with description

@@ -42,7 +42,8 @@ func main() {
 	ctx := context.Background()
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		log.Printf("⚠️ 無法連接 Redis: %v", err)
-		// 根據需求決定是否要 panic，這裡我們先繼續，讓 Service 決定是否降級
+		log.Println("⚠️ 將使用記憶體模式運行")
+		redisClient = nil // 設置為 nil，啟用記憶體模式
 	} else {
 		log.Println("✅ Redis 連線成功")
 	}
@@ -161,10 +162,15 @@ func setupRoutes(cfg *config.Config, gameHandler *handlers.GameHandler, roomHand
 	router.GET("/ws", wsHandler.HandleWebSocket)
 	router.GET("/ws/:roomId", wsHandler.HandleWebSocketWithRoom)
 
-	// 靜態文件服務 (用於開發)
-	if cfg.Environment == "development" {
-		router.Static("/static", "./static")
-	}
+	// 靜態文件服務 (Cloud Run 需要直接提供靜態檔案)
+	router.Static("/static", "./static")
+	router.StaticFile("/", "./static/index.html")
+	router.StaticFile("/favicon.ico", "./static/favicon.ico")
+
+	// 處理 SPA 路由：所有非 API/WebSocket 且未匹配的路由都導向 index.html
+	router.NoRoute(func(c *gin.Context) {
+		c.File("./static/index.html")
+	})
 
 	return router
 }
@@ -173,17 +179,22 @@ func corsMiddleware(origins []string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
 
-		// 檢查是否為允許的 origin
-		allowed := false
-		for _, allowedOrigin := range origins {
-			if origin == allowedOrigin {
-				allowed = true
-				break
+		// 开发模式下允许所有 origin
+		if os.Getenv("ENV") == "development" || os.Getenv("GIN_MODE") != "release" {
+			c.Header("Access-Control-Allow-Origin", "*")
+		} else {
+			// 檢查是否為允許的 origin
+			allowed := false
+			for _, allowedOrigin := range origins {
+				if origin == allowedOrigin {
+					allowed = true
+					break
+				}
 			}
-		}
 
-		if allowed {
-			c.Header("Access-Control-Allow-Origin", origin)
+			if allowed {
+				c.Header("Access-Control-Allow-Origin", origin)
+			}
 		}
 
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")

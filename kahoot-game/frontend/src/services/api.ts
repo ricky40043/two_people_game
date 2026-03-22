@@ -12,11 +12,7 @@ const resolveApiBaseURL = () => {
 
   if (typeof window !== 'undefined') {
     if (import.meta.env.DEV) {
-      const protocol = (import.meta.env.VITE_API_PROTOCOL || (window.location.protocol === 'https:' ? 'https' : 'http'))
-        .toString()
-        .replace(/:$/, '')
-      const port = import.meta.env.VITE_API_PORT?.toString().trim() || '8080'
-      return `${protocol}://${window.location.hostname}:${port}/api`
+      return '/api'
     }
 
     return `${normalizeUrl(window.location.origin)}/api`

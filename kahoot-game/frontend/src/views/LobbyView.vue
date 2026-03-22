@@ -294,11 +294,8 @@ const props = defineProps<{
 const roomId = computed(() => props.roomId || route.params.roomId as string)
 
 const joinUrl = computed(() => {
-  // 優先使用後端提供的 roomUrl
-  if (gameStore.currentRoom?.roomUrl) {
-    return gameStore.currentRoom.roomUrl
-  }
-  // 降級使用前端生成的 URL
+  // 總是使用前端當前的 Origin，確保連結與使用者瀏覽器一致
+  // 例如：如果用 localhost 開，就顯示 localhost；用 IP 開，就顯示 IP
   const baseUrl = window.location.origin
   return `${baseUrl}/join/${roomId.value}`
 })
@@ -337,25 +334,45 @@ const onQRGenerated = (_canvas: HTMLCanvasElement) => {
   logDebug('VIEW_LOBBY', 'QR Code 生成成功')
 }
 
-const copyRoomId = async () => {
+const copyToClipboard = async (text: string): Promise<boolean> => {
   try {
-    await navigator.clipboard.writeText(roomId.value)
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    const success = document.execCommand('copy')
+    document.body.removeChild(textarea)
+    return success
+  } catch {
+    return false
+  }
+}
+
+const copyRoomId = async () => {
+  const success = await copyToClipboard(roomId.value)
+  if (success) {
     logInfo('VIEW_LOBBY', '複製房間代碼成功', { roomId: roomId.value })
     uiStore.showSuccess('房間代碼已複製')
-  } catch (error) {
-    captureError('VIEW_LOBBY', error, { action: 'copyRoomId' })
-    uiStore.showError('複製失敗')
+  } else {
+    captureError('VIEW_LOBBY', new Error('Clipboard copy failed'), { action: 'copyRoomId' })
+    uiStore.showError('複製失敗，請手動複製')
   }
 }
 
 const copyJoinUrl = async () => {
-  try {
-    await navigator.clipboard.writeText(joinUrl.value)
+  const success = await copyToClipboard(joinUrl.value)
+  if (success) {
     logInfo('VIEW_LOBBY', '複製房間網址成功', { joinUrl: joinUrl.value })
     uiStore.showSuccess('加入網址已複製')
-  } catch (error) {
-    captureError('VIEW_LOBBY', error, { action: 'copyJoinUrl' })
-    uiStore.showError('複製失敗')
+  } else {
+    captureError('VIEW_LOBBY', new Error('Clipboard copy failed'), { action: 'copyJoinUrl' })
+    uiStore.showError('複製失敗，請手動複製')
   }
 }
 
@@ -468,8 +485,30 @@ const unwatchGameState = gameStore.$subscribe((_mutation, state) => {
 // 生命週期
 onMounted(() => {
   logInfo('VIEW_LOBBY', '頁面載入', { roomId: roomId.value, isHost: gameStore.isHost })
+  
   // 確保有房間資訊
   if (!gameStore.currentRoom) {
+    // 嘗試從 session 恢復
+    const savedSession = localStorage.getItem('ricky_game_session')
+    if (savedSession) {
+      try {
+        const session = JSON.parse(savedSession)
+        if (session.roomId === roomId.value) {
+          // 有 session，等待 WebSocket 重連
+          logInfo('VIEW_LOBBY', '偵測到 session，等待重連', session)
+          // 延遲檢查，讓重連有时间完成
+          setTimeout(() => {
+            if (!gameStore.currentRoom) {
+              uiStore.showError('重連失敗，請重新加入')
+              router.push('/')
+            }
+          }, 3000)
+          return
+        }
+      } catch (e) {
+        console.error('解析 session 失敗', e)
+      }
+    }
     uiStore.showError('房間資訊不存在，請重新加入')
     router.push('/')
     return

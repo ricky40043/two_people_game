@@ -20,16 +20,17 @@ declare global {
 
 const FALLBACK_LOGGER: DebugLogger = {
   info: (category, message, data) => {
-    // 只顯示重要的信息，隱藏過多的調試信息
-    const importantCategories = ['GAME', 'ERROR', 'WS'];
-    if (importantCategories.includes(category) || category.includes('ERROR')) {
-      console.info(`[${category}] ${message}`, data ?? '');
-    }
+    console.info(`%c[${category}] ${message}`, 'color: #3b82f6; font-weight: bold;', data ?? '');
   },
-  warn: (category, message, data) => console.warn(`[${category}] ${message}`, data ?? ''),
-  error: (category, message, data) => console.error(`[${category}] ${message}`, data ?? ''),
-  debug: (_category, _message, _data) => {
-    // 完全隱藏 DEBUG 級別的日誌
+  warn: (category, message, data) => {
+    console.warn(`%c[${category}] ${message}`, 'color: #f59e0b; font-weight: bold;', data ?? '');
+  },
+  error: (category, message, data) => {
+    console.error(`%c[${category}] ${message}`, 'color: #ef4444; font-weight: bold;', data ?? '');
+  },
+  debug: (category, message, data) => {
+    // 允許 DEBUG 級別日誌，使用灰色顯示
+    console.debug(`%c[${category}] ${message}`, 'color: #9ca3af;', data ?? '');
   }
 }
 

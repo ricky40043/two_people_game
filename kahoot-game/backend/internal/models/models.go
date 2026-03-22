@@ -22,7 +22,8 @@ type Room struct {
 	ID                string             `json:"id"`
 	HostID            string             `json:"hostId"`
 	HostName          string             `json:"hostName"`
-	HostConnected     bool               `json:"hostConnected"` // 主持人是否在線
+	HostToken         string             `json:"hostToken"`         // 主持人身份驗證 token
+	HostConnected     bool               `json:"hostConnected"`     // 主持人是否在線
 	Status            RoomStatus         `json:"status"`
 	Players           map[string]*Player `json:"players"`
 	CurrentQuestion   int                `json:"currentQuestion"`
@@ -37,6 +38,7 @@ type Room struct {
 	CreatedAt         time.Time          `json:"createdAt"`
 	StartedAt         *time.Time         `json:"startedAt,omitempty"`
 	FinishedAt        *time.Time         `json:"finishedAt,omitempty"`
+	LastActivity      time.Time          `json:"lastActivity"` // 最後活動時間，用於清理
 }
 
 // RoomStatus 房間狀態枚舉
@@ -49,6 +51,7 @@ const (
 	RoomStatusAnswering       RoomStatus = "answering"        // 答題時間
 	RoomStatusShowResult      RoomStatus = "show_result"      // 顯示答案結果
 	RoomStatusFinished        RoomStatus = "finished"         // 遊戲結束
+	RoomStatusAbandoned       RoomStatus = "abandoned"        // 所有人離線，等待清理
 )
 
 // Question 題目結構 - 適用於「2種人」遊戲

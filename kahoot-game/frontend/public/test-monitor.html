@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>Kahoot 測試監控</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #fff; padding: 20px; }
+    h1 { color: #ffd700; margin-bottom: 20px; }
+    .container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .panel { background: #16213e; border-radius: 12px; padding: 20px; }
+    .panel h2 { color: #0f3460; color: #e94560; margin-bottom: 15px; font-size: 16px; }
+    .log { height: 200px; overflow-y: auto; font-family: monospace; font-size: 12px; background: #0f0f23; padding: 10px; border-radius: 8px; }
+    .log div { padding: 2px 0; border-bottom: 1px solid #333; }
+    .log .sent { color: #4ade80; }
+    .log .received { color: #60a5fa; }
+    .log .error { color: #f87171; }
+    .log .info { color: #fbbf24; }
+    .status { display: flex; gap: 10px; margin-bottom: 20px; }
+    .status-item { background: #0f3460; padding: 8px 16px; border-radius: 20px; font-size: 14px; }
+    .status-item.connected { background: #22c55e; }
+    .status-item.disconnected { background: #ef4444; }
+    #console-log { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>🧪 Kahoot 測試監控面板</h1>
+  
+  <div class="status">
+    <div id="conn-status" class="status-item disconnected">❌ 未連線</div>
+    <div id="room-status" class="status-item">🏠 無房間</div>
+    <div id="player-status" class="status-item">👤 無玩家</div>
+    <div id="score-status" class="status-item">📊 分數: 0</div>
+  </div>
+
+  <div class="container">
+    <div class="panel">
+      <h2>📤 發送的訊息</h2>
+      <div id="sent-log" class="log"></div>
+    </div>
+    <div class="panel">
+      <h2>📥 收到的訊息</h2>
+      <div id="recv-log" class="log"></div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top: 20px;">
+    <h2>🔧 控制面板</h2>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px;">
+      <button onclick="connect()" style="padding: 10px 20px; background: #22c55e; border: none; border-radius: 8px; cursor: pointer;">🔌 連線</button>
+      <button onclick="createRoom()" style="padding: 10px 20px; background: #3b82f6; border: none; border-radius: 8px; cursor: pointer;">🏠 創建房間</button>
+      <button onclick="joinRoom()" style="padding: 10px 20px; background: #8b5cf6; border: none; border-radius: 8px; cursor: pointer;">👤 加入房間</button>
+      <button onclick="startGame()" style="padding: 10px 20px; background: #f59e0b; border: none; border-radius: 8px; cursor: pointer;">🎮 開始遊戲</button>
+      <button onclick="submitAnswer()" style="padding: 10px 20px; background: #ec4899; border: none; border-radius: 8px; cursor: pointer;">✅ 提交答案</button>
+      <button onclick="disconnect()" style="padding: 10px 20px; background: #ef4444; border: none; border-radius: 8px; cursor: pointer;">❌ 斷線</button>
+      <button onclick="reconnect()" style="padding: 10px 20px; background: #06b6d4; border: none; border-radius: 8px; cursor: pointer;">🔄 重連</button>
+    </div>
+  </div>
+
+  <script>
+    let ws = null;
+    let roomId = null;
+    let playerId = null;
+    let playerName = '測試玩家';
+    let currentQuestion = 0;
+    let isConnected = false;
+
+    const sentLog = document.getElementById('sent-log');
+    const recvLog = document.getElementById('recv-log');
+
+    function log(element, msg, type = 'info') {
+      const div = document.createElement('div');
+      div.className = type;
+      const time = new Date().toLocaleTimeString();
+      div.textContent = `[${time}] ${msg}`;
+      element.appendChild(div);
+      element.scrollTop = element.scrollHeight;
+    }
+
+    function connect() {
+      if (ws) { ws.close(); }
+      ws = new WebSocket('ws://localhost:8080/ws');
+      
+      ws.onopen = () => {
+        isConnected = true;
+        updateStatus('conn-status', '✅ 已連線', 'connected');
+        log(sentLog, 'WebSocket 連線成功', 'info');
+      };
+      
+      ws.onclose = () => {
+        isConnected = false;
+        updateStatus('conn-status', '❌ 已斷線', 'disconnected');
+        log(recvLog, 'WebSocket 連線已關閉', 'error');
+      };
+      
+      ws.onerror = (e) => {
+        log(recvLog, '連線錯誤', 'error');
+      };
+      
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        log(recvLog, `${msg.type}: ${JSON.stringify(msg.data || {}).substring(0, 100)}`, 'received');
+        handleMessage(msg);
+      };
+    }
+
+    function handleMessage(msg) {
+      switch (msg.type) {
+        case 'ROOM_CREATED':
+          roomId = msg.data.roomId;
+          updateStatus('room-status', `🏠 房間: ${roomId}`);
+          log(recvLog, `房間建立成功: ${roomId}`, 'info');
+          break;
+        case 'PLAYER_JOINED':
+          playerId = msg.data.playerId;
+          updateStatus('player-status', `👤 ${msg.data.playerName} (ID: ${playerId})`);
+          log(recvLog, `玩家加入成功: ${playerName}`, 'info');
+          break;
+        case 'QUESTION_START':
+          currentQuestion = msg.data.questionId;
+          log(recvLog, `📝 第 ${currentQuestion} 題: ${msg.data.question.text}`, 'info');
+          break;
+        case 'QUESTION_RESULT':
+          const points = msg.data.points || 0;
+          log(recvLog, `得分: +${points}`, 'info');
+          break;
+        case 'SCORES_UPDATE':
+          const myScore = msg.data.scores.find(s => s.playerName === playerName)?.score || 0;
+          updateStatus('score-status', `📊 分數: ${myScore}`);
+          break;
+        case 'REJOIN_SUCCESS':
+          log(recvLog, `🔄 重連成功！分數: ${msg.data.score}`, 'info');
+          break;
+      }
+    }
+
+    function send(type, data) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        log(sentLog, '錯誤: 未連線', 'error');
+        return;
+      }
+      const msg = { type, data };
+      ws.send(JSON.stringify(msg));
+      log(sentLog, `${type}: ${JSON.stringify(data).substring(0, 80)}`, 'sent');
+    }
+
+    function updateStatus(id, text, className = '') {
+      const el = document.getElementById(id);
+      el.textContent = text;
+      el.className = 'status-item ' + className;
+    }
+
+    function createRoom() {
+      send('CREATE_ROOM', { hostName: playerName, totalQuestions: 3, questionTimeLimit: 15 });
+    }
+
+    function joinRoom() {
+      const code = prompt('請輸入房間代碼:');
+      if (code) {
+        roomId = code;
+        send('JOIN_ROOM', { roomId, playerName });
+      }
+    }
+
+    function startGame() {
+      if (roomId) send('START_GAME', { roomId });
+    }
+
+    function submitAnswer() {
+      if (roomId && currentQuestion > 0) {
+        const answers = ['A', 'B', 'C', 'D'];
+        const answer = answers[Math.floor(Math.random() * 4)];
+        send('SUBMIT_ANSWER', { roomId, questionId: currentQuestion, answer, timeUsed: Math.floor(Math.random() * 10) });
+      }
+    }
+
+    function disconnect() {
+      if (ws) {
+        ws.close();
+        log(sentLog, '手動斷線', 'error');
+      }
+    }
+
+    function reconnect() {
+      if (roomId && playerId) {
+        connect();
+        setTimeout(() => {
+          send('REJOIN_ROOM', { roomId, playerId });
+        }, 500);
+      } else {
+        log(recvLog, '無法重連: 缺少 roomId 或 playerId', 'error');
+      }
+    }
+
+    // 自動連線
+    connect();
+  </script>
+</body>
+</html>

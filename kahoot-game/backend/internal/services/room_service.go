@@ -12,6 +12,7 @@ import (
 	"kahoot-game/internal/models"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/google/uuid"
 )
 
 // RoomService 房間服務
@@ -46,9 +47,11 @@ func (s *RoomService) CreateRoom(hostName string, totalQuestions, questionTimeLi
 	questions := GetRandomQuestions(totalQuestions)
 
 	// 創建房間
+	now := time.Now()
 	room := &models.Room{
 		ID:                roomID,
 		HostName:          hostName,
+		HostToken:         uuid.New().String(),
 		HostConnected:     true,
 		Status:            models.RoomStatusWaiting,
 		Players:           make(map[string]*models.Player),
@@ -56,7 +59,8 @@ func (s *RoomService) CreateRoom(hostName string, totalQuestions, questionTimeLi
 		TotalQuestions:    totalQuestions,
 		QuestionTimeLimit: questionTimeLimit,
 		Questions:         questions,
-		CreatedAt:         time.Now(),
+		CreatedAt:         now,
+		LastActivity:      now,
 	}
 
 	// 存儲到 Redis（如果有 Redis 客戶端）或記憶體
@@ -140,8 +144,21 @@ func (s *RoomService) AddPlayer(roomID, playerID, playerName string) (*models.Pl
 	}
 
 	// 檢查玩家名稱是否重複
-	for _, player := range room.Players {
-		if player.Name == playerName {
+	for existingID, existing := range room.Players {
+		if existing.Name == playerName {
+			if !existing.IsConnected {
+				// 同名玩家斷線了 → 視為重連，用新連線 ID 接回來
+				existing.ID = playerID
+				existing.IsConnected = true
+				existing.LastActivity = time.Now()
+				delete(room.Players, existingID)
+				room.Players[playerID] = existing
+				room.LastActivity = time.Now()
+				if err := s.updateRoom(room); err != nil {
+					return nil, fmt.Errorf("更新房間資料失敗: %w", err)
+				}
+				return existing, nil
+			}
 			return nil, fmt.Errorf("玩家名稱已存在")
 		}
 	}
@@ -299,4 +316,37 @@ func (s *RoomService) generateRoomID() string {
 // UpdateRoom 更新房間（公開方法）
 func (s *RoomService) UpdateRoom(room *models.Room) error {
 	return s.updateRoom(room)
+}
+
+// GetAllRooms 獲取所有房間（用於清掃）
+func (s *RoomService) GetAllRooms() ([]*models.Room, error) {
+	if s.redisClient != nil {
+		ctx := context.Background()
+		roomIDs, err := s.redisClient.SMembers(ctx, database.ActiveRoomsKey).Result()
+		if err != nil {
+			return nil, fmt.Errorf("獲取活躍房間列表失敗: %w", err)
+		}
+
+		rooms := make([]*models.Room, 0, len(roomIDs))
+		for _, roomID := range roomIDs {
+			room, err := s.GetRoom(roomID)
+			if err != nil {
+				// 房間可能已過期，從活躍列表移除
+				s.redisClient.SRem(ctx, database.ActiveRoomsKey, roomID)
+				continue
+			}
+			rooms = append(rooms, room)
+		}
+		return rooms, nil
+	}
+
+	// 記憶體模式
+	s.memoryMutex.RLock()
+	defer s.memoryMutex.RUnlock()
+
+	rooms := make([]*models.Room, 0, len(s.memoryRooms))
+	for _, room := range s.memoryRooms {
+		rooms = append(rooms, room)
+	}
+	return rooms, nil
 }

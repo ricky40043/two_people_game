@@ -14,7 +14,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: 3333,
     host: true,
     proxy: {
       // API 代理到後端

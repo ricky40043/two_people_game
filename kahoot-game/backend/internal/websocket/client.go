@@ -168,6 +168,8 @@ func (c *Client) writePump() {
 func (c *Client) handleMessage(msg *Message) {
 	log.Printf("📨 收到訊息 type=%s from=%s room=%s", msg.Type, c.ID, c.RoomID)
 	switch msg.Type {
+	case "CHECK_ROOM":
+		c.handleCheckRoom(msg.Data)
 	case "CREATE_ROOM":
 		c.handleCreateRoom(msg.Data)
 	case "JOIN_ROOM":
@@ -178,6 +180,8 @@ func (c *Client) handleMessage(msg *Message) {
 		c.handleRejoinRoom(msg.Data)
 	case "START_GAME":
 		c.handleStartGame(msg.Data)
+	case "FORCE_END_GAME":
+		c.handleForceEndGame(msg.Data)
 	case "SUBMIT_ANSWER":
 		c.handleSubmitAnswer(msg.Data)
 	case "LEAVE_ROOM":
@@ -188,6 +192,68 @@ func (c *Client) handleMessage(msg *Message) {
 		log.Printf("未知訊息類型: %s", msg.Type)
 		c.sendError("UNKNOWN_MESSAGE_TYPE", "未知的訊息類型")
 	}
+}
+
+// handleCheckRoom 處理查詢房間狀態（不加入房間）
+func (c *Client) handleCheckRoom(data interface{}) {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		c.sendError("INVALID_DATA", "查詢房間資料格式錯誤")
+		return
+	}
+
+	roomID, _ := dataMap["roomId"].(string)
+	playerID, _ := dataMap["playerId"].(string)
+
+	if roomID == "" {
+		c.sendError("INVALID_DATA", "房間ID不能為空")
+		return
+	}
+
+	// 查詢房間
+	room, err := c.hub.roomService.GetRoom(roomID)
+	if err != nil {
+		// 房間不存在
+		response := Message{
+			Type: "ROOM_STATUS",
+			Data: map[string]interface{}{
+				"roomId": roomID,
+				"exists": false,
+			},
+		}
+		c.sendMessage(&response)
+		return
+	}
+
+	// 檢查玩家是否在房間中
+	playerExists := false
+	isHost := false
+	playerName := ""
+	if playerID != "" {
+		if player, exists := room.Players[playerID]; exists {
+			playerExists = true
+			isHost = player.IsHost
+			playerName = player.Name
+		}
+	}
+
+	response := Message{
+		Type: "ROOM_STATUS",
+		Data: map[string]interface{}{
+			"roomId":       roomID,
+			"exists":       true,
+			"status":       room.Status,
+			"playerCount":  room.GetPlayerCount(),
+			"playerExists": playerExists,
+			"playerName":   playerName,
+			"isHost":       isHost,
+			"hostName":     room.HostName,
+		},
+	}
+	c.sendMessage(&response)
+
+	log.Printf("🔍 CHECK_ROOM: 房間=%s, 狀態=%s, 玩家存在=%v, 是主持人=%v",
+		roomID, room.Status, playerExists, isHost)
 }
 
 // handleCreateRoom 處理創建房間
@@ -219,7 +285,9 @@ func (c *Client) handleCreateRoom(data interface{}) {
 	c.PlayerName = hostName
 	c.RoomID = room.ID
 	c.IsHost = true
-	c.ID = c.ID // 確保 client ID 已設置
+
+	// 設定房間的主持人 ID
+	room.HostID = c.ID
 
 	// 將主持人添加為玩家
 	hostPlayer, err := c.hub.roomService.AddPlayer(room.ID, c.ID, hostName)
@@ -248,6 +316,7 @@ func (c *Client) handleCreateRoom(data interface{}) {
 			"roomId":            room.ID,
 			"hostName":          hostName,
 			"clientId":          c.ID, // 返回 clientId 作為 playerId
+			"hostToken":         room.HostToken, // 主持人身份驗證 token
 			"totalQuestions":    totalQuestions,
 			"questionTimeLimit": questionTimeLimit,
 			"roomUrl":           roomUrl,
@@ -406,8 +475,9 @@ func (c *Client) handleRejoinRoom(data interface{}) {
 
 	roomID, _ := dataMap["roomId"].(string)
 	playerID, _ := dataMap["playerId"].(string)
+	hostToken, _ := dataMap["hostToken"].(string)
 
-	log.Printf("🔄 收到重連請求: roomID=%s, playerID=%s", roomID, playerID)
+	log.Printf("🔄 收到重連請求: roomID=%s, playerID=%s, hasHostToken=%v", roomID, playerID, hostToken != "")
 
 	if roomID == "" || playerID == "" {
 		c.sendError("INVALID_DATA", "房間ID和玩家ID不能為空")
@@ -438,20 +508,29 @@ func (c *Client) handleRejoinRoom(data interface{}) {
 		return
 	}
 
+	// 判斷是否為主持人（通過 hostToken 驗證或原有的 IsHost 標記）
+	isHost := player.IsHost
+	if hostToken != "" && room.HostToken != "" && hostToken == room.HostToken {
+		isHost = true
+		player.IsHost = true
+		log.Printf("✅ hostToken 驗證通過，恢復主持人身份: %s", player.Name)
+	}
+
 	// 更新客戶端狀態
 	c.ID = playerID
 	c.PlayerName = player.Name
 	c.RoomID = roomID
-	c.IsHost = player.IsHost
+	c.IsHost = isHost
 
 	// 更新玩家為在線
 	player.IsConnected = true
+	room.LastActivity = time.Now()
 	c.hub.roomService.UpdateRoom(room)
 
 	// 將客戶端加入房間
 	c.hub.AddClientToRoom(c, roomID)
 
-	log.Printf("🔄 玩家 %s (%s) 成功重新加入房間 %s", player.Name, playerID, roomID)
+	log.Printf("🔄 玩家 %s (%s) 成功重新加入房間 %s (isHost=%v)", player.Name, playerID, roomID, isHost)
 
 	// 判斷是否需要等待下一題
 	isGameInProgress := room.Status == "question_display" ||
@@ -473,6 +552,8 @@ func (c *Client) handleRejoinRoom(data interface{}) {
 			"currentQuestion":        room.CurrentQuestion,
 			"totalQuestions":         room.TotalQuestions,
 			"waitingForNextQuestion": waitingForNextQuestion,
+			"isHost":                 isHost,
+			"canEndGame":             isHost,
 			"message":                "重新連線成功！",
 		},
 	}
@@ -1191,6 +1272,57 @@ func (c *Client) getHostAnswer(room *models.Room) string {
 		}
 	}
 	return ""
+}
+
+// handleForceEndGame 處理強制結束遊戲 (例如主持人手動結束)
+func (c *Client) handleForceEndGame(data interface{}) {
+	// 支援 hostToken 驗證，即使 c.IsHost 為 false 也能通過
+	authorized := c.IsHost
+	if !authorized {
+		if dataMap, ok := data.(map[string]interface{}); ok {
+			if hostToken, _ := dataMap["hostToken"].(string); hostToken != "" {
+				if room, err := c.hub.roomService.GetRoom(c.RoomID); err == nil {
+					if room.HostToken != "" && hostToken == room.HostToken {
+						authorized = true
+						c.IsHost = true
+						log.Printf("✅ FORCE_END_GAME: hostToken 驗證通過: %s", c.PlayerName)
+					}
+				}
+			}
+		}
+	}
+	if !authorized {
+		c.sendError("PERMISSION_DENIED", "只有主持人可以結束遊戲")
+		return
+	}
+
+	room, err := c.hub.roomService.GetRoom(c.RoomID)
+	if err != nil {
+		log.Printf("獲取房間錯誤: %v", err)
+		return
+	}
+
+	log.Printf("🛑 主持人 %s 強制結束房間 %s 的遊戲", c.PlayerName, c.RoomID)
+
+	// 強制結束遊戲
+	room.Status = models.RoomStatusFinished
+	_ = c.hub.roomService.UpdateRoom(room)
+
+	// 發送最終結果給所有人
+	finalStats := c.hub.gameService.GetFinalRanking(room)
+	
+	gameEndMsg := Message{
+		Type: "GAME_FINISHED",
+		Data: map[string]interface{}{
+			"finalStats":     finalStats,
+			"message":        "遊戲已由主持人提早結束",
+			"totalQuestions": len(room.Questions),
+		},
+	}
+
+	if msgBytes, err := json.Marshal(gameEndMsg); err == nil {
+		c.hub.BroadcastToRoom(c.RoomID, msgBytes)
+	}
 }
 
 // handleLeaveRoom 處理離開房間

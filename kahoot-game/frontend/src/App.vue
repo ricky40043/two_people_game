@@ -65,8 +65,8 @@
     </div>
 
     <!-- 全域成功提示 -->
-    <div 
-      v-if="successMessage" 
+    <div
+      v-if="successMessage"
       class="fixed top-20 right-4 bg-green-500 text-white px-6 py-4 rounded-lg shadow-lg z-50 max-w-sm"
     >
       <div class="flex items-center justify-between">
@@ -79,20 +79,59 @@
         </button>
       </div>
     </div>
+
+    <!-- 重連詢問彈窗 -->
+    <RejoinDialog
+      :visible="socketStore.showRejoinDialog"
+      :room-id="socketStore.rejoinDialogData?.roomId || ''"
+      :player-name="socketStore.rejoinDialogData?.playerName || ''"
+      :host-name="socketStore.rejoinDialogData?.hostName || ''"
+      :room-status="socketStore.rejoinDialogData?.roomStatus || ''"
+      :is-host="socketStore.rejoinDialogData?.isHost || false"
+      @rejoin="socketStore.confirmRejoin()"
+      @leave="socketStore.cancelRejoin()"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useGameStore } from '@/stores/game'
 import { useSocketStore } from '@/stores/socket'
 import { useUIStore } from '@/stores/ui'
+import RejoinDialog from '@/components/RejoinDialog.vue'
 
 const route = useRoute()
+const router = useRouter()
 const gameStore = useGameStore()
 const socketStore = useSocketStore()
 const uiStore = useUIStore()
+
+// 重連成功後，根據遊戲狀態導航到正確頁面
+watch(() => gameStore.gameState, (newState) => {
+  if (!gameStore.currentRoom || !gameStore.currentPlayer) return
+
+  const roomId = gameStore.currentRoom.id
+  const currentPath = route.path
+
+  // 只在首頁或非遊戲頁面時自動導航（避免干擾正在進行的頁面）
+  const isOnHomePage = currentPath === '/' || currentPath === '/create' || currentPath === '/join'
+
+  if (!isOnHomePage) return
+
+  if (newState === 'waiting') {
+    router.push(`/lobby/${roomId}`)
+  } else if (newState === 'playing' || newState === 'show_result') {
+    if (gameStore.currentPlayer.isHost) {
+      router.push(`/game/host/${roomId}`)
+    } else {
+      router.push(`/game/player/${roomId}`)
+    }
+  } else if (newState === 'finished') {
+    router.push(`/results/${roomId}`)
+  }
+})
 
 // 計算屬性
 const showNavigation = computed(() => {

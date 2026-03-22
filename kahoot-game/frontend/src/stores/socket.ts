@@ -8,19 +8,15 @@ import type { WebSocketMessage } from '@/types'
 
 
 const resolveWebSocketURL = () => {
-  // 優先使用環境變數（生產環境/Cloud Run 必須設定 VITE_WS_URL）
+  // 優先使用環境變數
   const envWsUrl = import.meta.env.VITE_WS_URL?.toString().trim()
   if (envWsUrl) {
     return envWsUrl
   }
 
-  // Fallback：動態判斷 WebSocket URL（僅限本機開發）
+  // Fallback：同源（前後端合一部署 / Vite dev proxy 都走這條）
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const host = window.location.hostname
-  const port = import.meta.env.VITE_WS_PORT?.toString().trim() || '8080'
-  const path = import.meta.env.VITE_WS_PATH?.toString().trim() || '/ws'
-
-  return `${protocol}://${host}:${port}${path}`
+  return `${protocol}://${window.location.host}/ws`
 }
 
 export const useSocketStore = defineStore('socket', () => {
@@ -29,6 +25,18 @@ export const useSocketStore = defineStore('socket', () => {
   const reconnectAttempts = ref(0)
   const maxReconnectAttempts = 5
   const shouldReconnect = ref(true)
+
+  // 重連彈窗狀態
+  const showRejoinDialog = ref(false)
+  const rejoinDialogData = ref<{
+    roomId: string
+    playerId: string
+    playerName: string
+    hostName: string
+    roomStatus: string
+    isHost: boolean
+    hostToken?: string
+  } | null>(null)
 
   const gameStore = useGameStore()
   const uiStore = useUIStore()
@@ -67,22 +75,28 @@ export const useSocketStore = defineStore('socket', () => {
       reconnectAttempts.value = 0
       uiStore.showSuccess('連線成功')
 
-      // 檢查是否需要自動重連
+      // 檢查是否有舊 session — 發 CHECK_ROOM 查詢，不自動加入
       const savedSession = localStorage.getItem('ricky_game_session')
       if (savedSession) {
         try {
           const session = JSON.parse(savedSession)
           if (session.roomId && session.playerId) {
-            logInfo('WS', '偵測到現有會話，嘗試自動重連...', { roomId: session.roomId, playerId: session.playerId })
-            // 延遲一下再重連，確保連線穩定
+            logInfo('WS', '偵測到現有會話，發送 CHECK_ROOM 查詢...', { roomId: session.roomId, playerId: session.playerId })
             setTimeout(() => {
               if (isConnected.value) {
-                rejoinRoom(session.roomId, session.playerId)
+                sendMessage({
+                  type: 'CHECK_ROOM',
+                  data: {
+                    roomId: session.roomId,
+                    playerId: session.playerId
+                  }
+                })
               }
             }, 500)
           }
         } catch (e) {
           logError('WS', '解析快取會話失敗', e)
+          localStorage.removeItem('ricky_game_session')
         }
       }
     }
@@ -198,6 +212,9 @@ export const useSocketStore = defineStore('socket', () => {
       case 'ROOM_CLOSED':
         handleRoomClosed(message.data)
         break
+      case 'ROOM_STATUS':
+        handleRoomStatus(message.data)
+        break
       case 'REJOIN_SUCCESS':
         handleRejoinSuccess(message.data)
         break
@@ -210,6 +227,77 @@ export const useSocketStore = defineStore('socket', () => {
       default:
         logWarn('WS_RX', '收到未知訊息類型', { type: message.type, payload: message })
     }
+  }
+
+  // 處理 CHECK_ROOM 回覆
+  const handleRoomStatus = (data: any) => {
+    logInfo('ROOM', 'CHECK_ROOM 回覆', data)
+
+    const savedSession = localStorage.getItem('ricky_game_session')
+    if (!savedSession) return
+
+    let session: any
+    try {
+      session = JSON.parse(savedSession)
+    } catch {
+      localStorage.removeItem('ricky_game_session')
+      return
+    }
+
+    if (!data.exists) {
+      // 房間不存在 → 清除 session
+      logInfo('ROOM', '房間不存在，清除 session')
+      localStorage.removeItem('ricky_game_session')
+      return
+    }
+
+    if (data.status === 'finished' || data.status === 'abandoned') {
+      // 房間已結束 → 清除 session
+      logInfo('ROOM', '房間已結束，清除 session')
+      localStorage.removeItem('ricky_game_session')
+      return
+    }
+
+    if (!data.playerExists) {
+      // 玩家不在房間裡了 → 清除 session
+      logInfo('ROOM', '玩家不在房間中，清除 session')
+      localStorage.removeItem('ricky_game_session')
+      return
+    }
+
+    // 房間存在且玩家在裡面 → 顯示彈窗讓使用者選擇
+    rejoinDialogData.value = {
+      roomId: data.roomId,
+      playerId: session.playerId,
+      playerName: data.playerName || session.playerName,
+      hostName: data.hostName || '',
+      roomStatus: data.status,
+      isHost: data.isHost || false,
+      hostToken: session.hostToken
+    }
+    showRejoinDialog.value = true
+  }
+
+  // 使用者選擇「返回遊戲」
+  const confirmRejoin = () => {
+    if (!rejoinDialogData.value) return
+    const { roomId, playerId, hostToken } = rejoinDialogData.value
+    showRejoinDialog.value = false
+    rejoinDialogData.value = null
+    rejoinRoom(roomId, playerId, hostToken)
+  }
+
+  // 使用者選擇「離開，回首頁」
+  const cancelRejoin = () => {
+    if (!rejoinDialogData.value) return
+    const { roomId } = rejoinDialogData.value
+    showRejoinDialog.value = false
+    rejoinDialogData.value = null
+
+    // 發送 LEAVE_ROOM 通知後端
+    sendMessage({ type: 'LEAVE_ROOM', data: { roomId } })
+    localStorage.removeItem('ricky_game_session')
+    gameStore.resetGame()
   }
 
   // 事件處理函數
@@ -232,13 +320,14 @@ export const useSocketStore = defineStore('socket', () => {
       joinCode: data.joinCode || data.roomId
     })
 
-    // 保存主持人會話 - 使用後端返回的 clientId
+    // 保存主持人會話 - 使用後端返回的 clientId 和 hostToken
     if (data.clientId) {
       localStorage.setItem('ricky_game_session', JSON.stringify({
         roomId: data.roomId,
         playerId: data.clientId,
         playerName: data.hostName,
-        isHost: true
+        isHost: true,
+        hostToken: data.hostToken || ''
       }))
     }
 
@@ -288,12 +377,22 @@ export const useSocketStore = defineStore('socket', () => {
     gameStore.setPlayer(hostPlayer)
     gameStore.addPlayer(hostPlayer)
 
-    // 保存主持人會話
+    // 保存主持人會話（保留 hostToken）
+    const existingSession = localStorage.getItem('ricky_game_session')
+    let hostToken = ''
+    try {
+      if (existingSession) {
+        const parsed = JSON.parse(existingSession)
+        if (parsed.hostToken) hostToken = parsed.hostToken
+      }
+    } catch { /* ignore */ }
+
     localStorage.setItem('ricky_game_session', JSON.stringify({
       roomId: data.roomId,
       playerId: data.clientId,
       playerName: data.hostName,
-      isHost: true
+      isHost: true,
+      hostToken: data.hostToken || hostToken
     }))
 
     // 更新房間資訊
@@ -810,8 +909,9 @@ export const useSocketStore = defineStore('socket', () => {
 
     console.log('🏁 === 前端遊戲結束處理完成 ===')
 
-    // 不自動清理，等待用戶操作
-    logDebug('GAME', '等待玩家操作清理')
+    // 遊戲結束，清除 session 讓玩家可以自由操作
+    localStorage.removeItem('ricky_game_session')
+    logDebug('GAME', '已清除 session，等待玩家操作')
   }
 
   const handleError = (data: any) => {
@@ -835,17 +935,8 @@ export const useSocketStore = defineStore('socket', () => {
   const handleRejoinSuccess = (data: any) => {
     logInfo('ROOM', '重連成功', data)
 
-    // 從 session 獲取 isHost 狀態
-    const savedSession = localStorage.getItem('ricky_game_session')
-    let isHost = false
-    try {
-      if (savedSession) {
-        const session = JSON.parse(savedSession)
-        isHost = session.isHost || false
-      }
-    } catch (e) {
-      console.error('解析 session 失敗', e)
-    }
+    // 使用伺服器回覆的 isHost（通過 hostToken 驗證後的結果）
+    const isHost = data.isHost || false
 
     // 恢復房間狀態
     gameStore.setRoom({
@@ -874,12 +965,36 @@ export const useSocketStore = defineStore('socket', () => {
       lastActivity: new Date()
     })
 
+    // 更新 localStorage 的 isHost 狀態
+    const savedSession = localStorage.getItem('ricky_game_session')
+    if (savedSession) {
+      try {
+        const session = JSON.parse(savedSession)
+        session.isHost = isHost
+        localStorage.setItem('ricky_game_session', JSON.stringify(session))
+      } catch { /* ignore */ }
+    }
+
     // 更新玩家列表
     if (data.players) {
       handlePlayerJoined({ players: data.players, roomId: data.roomId })
     }
 
-    uiStore.showSuccess('欢迎回来，連線已恢復！')
+    // 映射後端房間狀態到前端 gameState
+    const roomStatus = data.roomStatus || data.gameState || 'waiting'
+    let mappedState: 'waiting' | 'playing' | 'show_result' | 'finished' = 'waiting'
+    if (roomStatus === 'waiting') {
+      mappedState = 'waiting'
+    } else if (['playing', 'question_display', 'answering', 'starting'].includes(roomStatus)) {
+      mappedState = 'playing'
+    } else if (roomStatus === 'show_result') {
+      mappedState = 'show_result'
+    } else if (roomStatus === 'finished') {
+      mappedState = 'finished'
+    }
+    gameStore.setGameState(mappedState)
+
+    uiStore.showSuccess('歡迎回來，連線已恢復！')
   }
 
   const handlePlayerRejoined = (data: any) => {
@@ -907,8 +1022,25 @@ export const useSocketStore = defineStore('socket', () => {
     }
   }
 
+  // 離開舊房間的輔助函數（建房/加入前自動呼叫）
+  const leaveOldRoomIfNeeded = () => {
+    const savedSession = localStorage.getItem('ricky_game_session')
+    if (savedSession) {
+      try {
+        const session = JSON.parse(savedSession)
+        if (session.roomId) {
+          logInfo('WS', '自動離開舊房間', { roomId: session.roomId })
+          sendMessage({ type: 'LEAVE_ROOM', data: { roomId: session.roomId } })
+        }
+      } catch { /* ignore */ }
+      localStorage.removeItem('ricky_game_session')
+      gameStore.resetGame()
+    }
+  }
+
   // 創建房間
   const createRoom = (hostName: string, totalQuestions: number, questionTimeLimit: number) => {
+    leaveOldRoomIfNeeded()
     logInfo('WS_TX', '送出 CREATE_ROOM 指令', {
       hostName,
       totalQuestions,
@@ -926,6 +1058,7 @@ export const useSocketStore = defineStore('socket', () => {
 
   // 加入房間
   const joinRoom = (roomId: string, playerName: string) => {
+    leaveOldRoomIfNeeded()
     logInfo('WS_TX', '送出 JOIN_ROOM 指令', { roomId, playerName })
     sendMessage({
       type: 'JOIN_ROOM',
@@ -936,41 +1069,28 @@ export const useSocketStore = defineStore('socket', () => {
     })
   }
 
-  // 重連房間 - 如果是主持人，發送 JOIN_AS_HOST
-  const rejoinRoom = (roomId: string, playerId: string) => {
-    // 從 session 獲取 isHost 狀態
-    const savedSession = localStorage.getItem('ricky_game_session')
-    let isHost = false
-    try {
-      if (savedSession) {
-        const session = JSON.parse(savedSession)
-        isHost = session.isHost || false
-      }
-    } catch (e) {
-      console.error('解析 session 失敗', e)
+  // 重連房間 - 統一使用 REJOIN_ROOM，帶 hostToken 讓伺服器驗證身份
+  const rejoinRoom = (roomId: string, playerId: string, hostToken?: string) => {
+    // 如果沒傳 hostToken，從 localStorage 取
+    if (!hostToken) {
+      try {
+        const savedSession = localStorage.getItem('ricky_game_session')
+        if (savedSession) {
+          const session = JSON.parse(savedSession)
+          hostToken = session.hostToken || ''
+        }
+      } catch { /* ignore */ }
     }
 
-    if (isHost) {
-      // 主持人重連
-      logInfo('WS_TX', '送出 JOIN_AS_HOST 指令', { roomId, playerId })
-      sendMessage({
-        type: 'JOIN_AS_HOST',
-        data: {
-          roomId,
-          hostName: '' // 會從 session 获取
-        }
-      })
-    } else {
-      // 玩家重連
-      logInfo('WS_TX', '送出 REJOIN_ROOM 指令', { roomId, playerId })
-      sendMessage({
-        type: 'REJOIN_ROOM',
-        data: {
-          roomId,
-          playerId
-        }
-      })
-    }
+    logInfo('WS_TX', '送出 REJOIN_ROOM 指令', { roomId, playerId, hasHostToken: !!hostToken })
+    sendMessage({
+      type: 'REJOIN_ROOM',
+      data: {
+        roomId,
+        playerId,
+        hostToken: hostToken || ''
+      }
+    })
   }
 
   // 開始遊戲
@@ -1013,6 +1133,27 @@ export const useSocketStore = defineStore('socket', () => {
     sendMessage({
       type: 'PING',
       data: {}
+    })
+  }
+
+  // 強制結束遊戲（帶 hostToken）
+  const forceEndGame = (roomId: string) => {
+    let hostToken = ''
+    try {
+      const savedSession = localStorage.getItem('ricky_game_session')
+      if (savedSession) {
+        const session = JSON.parse(savedSession)
+        hostToken = session.hostToken || ''
+      }
+    } catch { /* ignore */ }
+
+    logInfo('WS_TX', '送出 FORCE_END_GAME 指令', { roomId, hasHostToken: !!hostToken })
+    sendMessage({
+      type: 'FORCE_END_GAME',
+      data: {
+        roomId,
+        hostToken
+      }
     })
   }
 
@@ -1080,6 +1221,8 @@ export const useSocketStore = defineStore('socket', () => {
     isConnected,
     reconnectAttempts,
     socket, // 導出 socket 以便外部監聽
+    showRejoinDialog,
+    rejoinDialogData,
 
     // 動作
     connect,
@@ -1091,6 +1234,9 @@ export const useSocketStore = defineStore('socket', () => {
     submitAnswer,
     leaveRoom,
     sendPing,
-    cleanupAfterGame
+    forceEndGame,
+    cleanupAfterGame,
+    confirmRejoin,
+    cancelRejoin
   }
 })

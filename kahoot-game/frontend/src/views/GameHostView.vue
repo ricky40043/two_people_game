@@ -260,6 +260,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useGameStore } from '@/stores/game'
 import { useUIStore } from '@/stores/ui'
+import { useSocketStore } from '@/stores/socket'
 import { useGameLogic } from '@/composables/useGameLogic'
 import PlayerAvatar from '@/components/PlayerAvatar.vue'
 
@@ -267,6 +268,7 @@ const route = useRoute()
 const router = useRouter()
 const gameStore = useGameStore()
 const uiStore = useUIStore()
+const socketStore = useSocketStore()
 const gameLogic = useGameLogic()
 
 // Props
@@ -412,9 +414,11 @@ const endGame = () => {
   if (window.debugLogger) {
     window.debugLogger.info('CLEANUP', '主持人結束遊戲，準備跳轉到結果頁面')
   }
+
+  // 通知後端強制結束遊戲
+  socketStore.forceEndGame(roomId.value)
   
   gameStore.setGameState('finished')
-  router.push(`/results/${roomId.value}`)
 }
 
 // 監聽遊戲狀態變化

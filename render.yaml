@@ -1,9 +1,14 @@
+# ⚠️  Render Free 方案不支援 WebSocket（30秒強制斷線）
+# ⚠️  這個專案建議使用 Cloud Run（見 cloudrun.md），免費且無限制
+#
+# 如果堅持用 Render，至少需要 Starter ($7/月) 才能正常跑 WebSocket
+# 以下設定僅供參考
+
 services:
-  # Backend Service 
   - type: web
     name: kahoot-game-backend
     runtime: go
-    plan: free
+    plan: starter           # free 方案 WebSocket 30秒會斷，必須用 starter
     region: singapore
     buildCommand: cd kahoot-game/backend && go build -o main cmd/main.go
     startCommand: ./kahoot-game/backend/main
@@ -12,17 +17,11 @@ services:
         value: 8080
       - key: ENV
         value: production
-      - key: DATABASE_URL
-        value: postgresql://postgres.bemhpytawvgvpgqfsmfx:Aa16171819.QAZWSX@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: kahoot-game-redis
-          property: connectionString
       - key: FRONTEND_URL
-        value: https://kahoot-game-frontend.onrender.com # Placeholder, update after frontend deploy
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
 
-  # Frontend Service
   - type: web
     name: kahoot-game-frontend
     runtime: static
@@ -34,13 +33,6 @@ services:
         destination: /index.html
     envVars:
       - key: VITE_API_URL
-        value: https://kahoot-game-backend.onrender.com # Placeholder, update after backend deploy
+        sync: false
       - key: VITE_WS_URL
-        value: wss://kahoot-game-backend.onrender.com/ws # Placeholder, update after backend deploy
-
-  # Redis Service
-  - type: redis
-    name: kahoot-game-redis
-    region: singapore
-    plan: free # Note: Render Free Redis is ephemeral (data loss on restart)
-    ipAllowList: [] # Allow internal connections only
+        sync: false

@@ -66,6 +66,9 @@ func NewHub(roomService *services.RoomService, gameService *services.GameService
 func (h *Hub) Run() {
 	log.Println("🚀 WebSocket Hub 已啟動")
 
+	// 啟動房間清掃 goroutine
+	go h.roomCleaner()
+
 	for {
 		select {
 		case client := <-h.register:
@@ -428,6 +431,85 @@ func (h *Hub) SendToClient(clientID string, message []byte) error {
 	}
 
 	return fmt.Errorf("找不到客戶端 %s", clientID)
+}
+
+// roomCleaner 定期清掃過期/廢棄的房間
+func (h *Hub) roomCleaner() {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		rooms, err := h.roomService.GetAllRooms()
+		if err != nil {
+			log.Printf("⚠️ 清掃：獲取房間列表失敗: %v", err)
+			continue
+		}
+
+		now := time.Now()
+		for _, room := range rooms {
+			shouldDelete := false
+			reason := ""
+
+			switch room.Status {
+			case models.RoomStatusFinished:
+				// 遊戲結束超過 10 分鐘 → 刪除
+				if room.FinishedAt != nil && now.Sub(*room.FinishedAt) > 10*time.Minute {
+					shouldDelete = true
+					reason = "遊戲結束超過10分鐘"
+				} else if now.Sub(room.LastActivity) > 10*time.Minute {
+					shouldDelete = true
+					reason = "遊戲結束且無活動超過10分鐘"
+				}
+
+			case models.RoomStatusWaiting:
+				// 等待中超過 30 分鐘沒人操作 → 刪除
+				if now.Sub(room.LastActivity) > 30*time.Minute {
+					shouldDelete = true
+					reason = "等待中無活動超過30分鐘"
+				}
+
+			default:
+				// 遊戲進行中，檢查是否所有人都斷線
+				allDisconnected := true
+				for _, player := range room.Players {
+					if player.IsConnected {
+						allDisconnected = false
+						break
+					}
+				}
+
+				if allDisconnected && now.Sub(room.LastActivity) > 5*time.Minute {
+					shouldDelete = true
+					reason = "所有玩家離線超過5分鐘"
+				}
+			}
+
+			if shouldDelete {
+				log.Printf("🧹 清掃房間 %s: %s (狀態=%s)", room.ID, reason, room.Status)
+				// 廣播房間關閉給可能還在的連線
+				closeMsg := Message{
+					Type: "ROOM_CLOSED",
+					Data: map[string]interface{}{
+						"roomId": room.ID,
+						"reason": "房間已過期，自動清理",
+					},
+				}
+				if msgBytes, err := json.Marshal(closeMsg); err == nil {
+					h.BroadcastToRoom(room.ID, msgBytes)
+				}
+
+				// 刪除房間
+				if err := h.roomService.DeleteRoom(room.ID); err != nil {
+					log.Printf("⚠️ 清掃：刪除房間 %s 失敗: %v", room.ID, err)
+				}
+
+				// 從 Hub 移除房間
+				h.mutex.Lock()
+				delete(h.rooms, room.ID)
+				h.mutex.Unlock()
+			}
+		}
+	}
 }
 
 // GetStats 獲取 Hub 統計資訊

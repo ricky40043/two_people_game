@@ -1,0 +1,12 @@
+{
+  "hosting": {
+    "public": "kahoot-game/frontend/dist",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
