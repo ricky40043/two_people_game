@@ -180,6 +180,8 @@ func (c *Client) handleMessage(msg *Message) {
 		c.handleRejoinRoom(msg.Data)
 	case "START_GAME":
 		c.handleStartGame(msg.Data)
+	case "CONTINUE_GAME":
+		c.handleContinueGame()
 	case "FORCE_END_GAME":
 		c.handleForceEndGame(msg.Data)
 	case "SUBMIT_ANSWER":
@@ -1172,13 +1174,18 @@ func (c *Client) handleSubmitAnswer(data interface{}) {
 	log.Printf("🎯 玩家 %s 提交答案: %s (耗時: %.2f秒), 已廣播給其他玩家", c.PlayerName, answer, timeUsed)
 }
 
-// checkAllPlayersAnswered 檢查是否所有玩家都已答題
+// checkAllPlayersAnswered 檢查是否所有非主持人玩家都已答題
 func (c *Client) checkAllPlayersAnswered(room *models.Room) bool {
-	totalPlayers := room.GetPlayerCount()
+	totalNonHostPlayers := 0
+	for _, p := range room.Players {
+		if !p.IsHost {
+			totalNonHostPlayers++
+		}
+	}
 	answeredPlayers := len(room.Answers)
 
-	log.Printf("📊 答題進度: %d/%d 玩家已答題", answeredPlayers, totalPlayers)
-	return answeredPlayers >= totalPlayers
+	log.Printf("📊 答題進度: %d/%d 非主持人玩家已答題", answeredPlayers, totalNonHostPlayers)
+	return answeredPlayers >= totalNonHostPlayers
 }
 
 // calculateAndShowResults 計算並顯示結果
@@ -1186,7 +1193,8 @@ func (c *Client) calculateAndShowResults(room *models.Room) {
 	// 計算分數
 	scores := c.hub.gameService.CalculateTwoTypesScores(room, room.Answers)
 
-	// 更新房間狀態
+	// 更新房間狀態為 show_result（讓 goroutine 可以檢查此狀態）
+	room.Status = models.RoomStatusShowResult
 	err := c.hub.roomService.UpdateRoom(room)
 	if err != nil {
 		log.Printf("更新房間狀態錯誤: %v", err)
@@ -1241,14 +1249,15 @@ func (c *Client) calculateAndShowResults(room *models.Room) {
 			return
 		}
 
+		// 若主持人已按「繼續」手動提前進入下一題，跳過自動觸發
+		if currentRoom.Status != models.RoomStatusShowResult {
+			log.Printf("⏭️ 主持人已手動繼續，跳過自動下一題")
+			return
+		}
+
 		// 清除答案記錄，準備下一題
 		currentRoom.Answers = make(map[string]*models.Answer)
-
-		// 先更新房間狀態
-		err = c.hub.roomService.UpdateRoom(currentRoom)
-		if err != nil {
-			log.Printf("更新房間狀態錯誤: %v", err)
-		}
+		c.hub.roomService.UpdateRoom(currentRoom)
 
 		log.Printf("🔄 開始處理下一題邏輯...")
 		c.handleNextQuestion()
@@ -1318,6 +1327,36 @@ func (c *Client) getHostAnswer(room *models.Room) string {
 }
 
 // handleForceEndGame 處理強制結束遊戲 (例如主持人手動結束)
+// handleContinueGame 主持人手動繼續（結果畫面 → 下一題，或跳過剩餘倒數）
+func (c *Client) handleContinueGame() {
+	if !c.IsHost {
+		c.sendError("PERMISSION_DENIED", "只有主持人可以繼續遊戲")
+		return
+	}
+
+	room, err := c.hub.roomService.GetRoom(c.RoomID)
+	if err != nil {
+		log.Printf("獲取房間錯誤: %v", err)
+		return
+	}
+
+	log.Printf("▶️ 主持人 %s 手動繼續，當前狀態: %s", c.PlayerName, room.Status)
+
+	switch room.Status {
+	case models.RoomStatusShowResult:
+		// 結果畫面：立即進入下一題（不等 5 秒）
+		room.Answers = make(map[string]*models.Answer)
+		room.Status = models.RoomStatusQuestionDisplay // 提前改狀態，讓 goroutine 跳過
+		c.hub.roomService.UpdateRoom(room)
+		c.handleNextQuestion()
+	case models.RoomStatusQuestionDisplay:
+		// 題目還在倒數：強制結算
+		c.calculateAndShowResults(room)
+	default:
+		log.Printf("⚠️ CONTINUE_GAME 在非預期狀態下被呼叫: %s", room.Status)
+	}
+}
+
 func (c *Client) handleForceEndGame(data interface{}) {
 	// 支援 hostToken 驗證，即使 c.IsHost 為 false 也能通過
 	authorized := c.IsHost

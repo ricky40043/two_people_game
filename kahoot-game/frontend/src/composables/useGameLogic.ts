@@ -35,8 +35,8 @@ export function useGameLogic() {
   })
 
   const canNextQuestion = computed(() => {
-    // 所有人都答題了，或者時間到了
-    return answeredCount.value >= gameStore.playerCount || timer.timeLeft.value <= 0
+    // 所有非主持人玩家都答題了，或者時間到了
+    return answeredCount.value >= gameStore.playerCount || gameStore.timeLeft <= 0
   })
 
   const isLastQuestion = computed(() => {
@@ -103,10 +103,6 @@ export function useGameLogic() {
 
     // 設定遊戲狀態
     gameStore.setGameState('playing')
-
-    // 開始計時
-    const timeLimit = gameStore.currentRoom?.questionTimeLimit || 30
-    timer.start(timeLimit)
 
     console.log(`📝 開始第 ${currentQuestionNumber.value} 題，主角: ${hostPlayer?.name}`)
   }

@@ -1152,6 +1152,11 @@ export const useSocketStore = defineStore('socket', () => {
   }
 
   // 強制結束遊戲（帶 hostToken）
+  const continueGame = () => {
+    logInfo('WS_TX', '主持人送出 CONTINUE_GAME')
+    sendMessage({ type: 'CONTINUE_GAME', data: {} })
+  }
+
   const forceEndGame = (roomId: string) => {
     let hostToken = ''
     try {
@@ -1249,6 +1254,7 @@ export const useSocketStore = defineStore('socket', () => {
     submitAnswer,
     leaveRoom,
     sendPing,
+    continueGame,
     forceEndGame,
     cleanupAfterGame,
     confirmRejoin,

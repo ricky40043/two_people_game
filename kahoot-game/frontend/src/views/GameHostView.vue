@@ -392,18 +392,15 @@ const isPlayerOnline = (playerId: string) => {
 // getCorrectAnswerText 方法已移除，「2種人」遊戲不需要正確答案概念
 
 const nextQuestion = () => {
-  gameLogic.nextQuestion()
+  socketStore.continueGame()
 }
 
 const skipQuestion = () => {
-  gameLogic.endQuestion()
-  setTimeout(() => {
-    gameLogic.nextQuestion()
-  }, 2000)
+  socketStore.continueGame()
 }
 
 const continueGame = () => {
-  gameLogic.nextQuestion()
+  socketStore.continueGame()
 }
 
 const endGame = () => {

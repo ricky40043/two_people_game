@@ -32,7 +32,8 @@ export const useGameStore = defineStore('game', () => {
   })
 
   const playerCount = computed(() => {
-    return currentRoom.value?.players ? Object.keys(currentRoom.value.players).length : 0
+    if (!currentRoom.value?.players) return 0
+    return Object.values(currentRoom.value.players).filter(p => !p.isHost).length
   })
 
   const sortedScores = computed(() => {
@@ -213,7 +214,7 @@ export const useGameStore = defineStore('game', () => {
   // 計算已答題玩家數量
   const answeredPlayersCount = computed(() => {
     if (!currentRoom.value) return 0
-    return Object.values(currentRoom.value.players).filter(player => player.hasAnswered).length
+    return Object.values(currentRoom.value.players).filter(player => !player.isHost && player.hasAnswered).length
   })
 
   return {
