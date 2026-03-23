@@ -109,27 +109,28 @@ const socketStore = useSocketStore()
 const uiStore = useUIStore()
 
 // 重連成功後，根據遊戲狀態導航到正確頁面
+// 適用於所有頁面（刷新後 REJOIN_SUCCESS 會觸發此 watcher）
 watch(() => gameStore.gameState, (newState) => {
   if (!gameStore.currentRoom || !gameStore.currentPlayer) return
 
   const roomId = gameStore.currentRoom.id
   const currentPath = route.path
 
-  // 只在首頁或非遊戲頁面時自動導航（避免干擾正在進行的頁面）
-  const isOnHomePage = currentPath === '/' || currentPath === '/create' || currentPath === '/join'
-
-  if (!isOnHomePage) return
-
+  // 計算目標路徑
+  let targetPath = ''
   if (newState === 'waiting') {
-    router.push(`/lobby/${roomId}`)
+    targetPath = `/lobby/${roomId}`
   } else if (newState === 'playing' || newState === 'show_result') {
-    if (gameStore.currentPlayer.isHost) {
-      router.push(`/game/host/${roomId}`)
-    } else {
-      router.push(`/game/player/${roomId}`)
-    }
+    targetPath = gameStore.currentPlayer.isHost
+      ? `/game/host/${roomId}`
+      : `/game/player/${roomId}`
   } else if (newState === 'finished') {
-    router.push(`/results/${roomId}`)
+    targetPath = `/results/${roomId}`
+  }
+
+  // 只在目標路徑與當前路徑不同時導航（避免無限迴圈）
+  if (targetPath && currentPath !== targetPath) {
+    router.push(targetPath)
   }
 })
 

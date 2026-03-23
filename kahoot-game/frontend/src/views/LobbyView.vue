@@ -485,34 +485,32 @@ const unwatchGameState = gameStore.$subscribe((_mutation, state) => {
 // 生命週期
 onMounted(() => {
   logInfo('VIEW_LOBBY', '頁面載入', { roomId: roomId.value, isHost: gameStore.isHost })
-  
-  // 確保有房間資訊
-  if (!gameStore.currentRoom) {
-    // 嘗試從 session 恢復
-    const savedSession = localStorage.getItem('ricky_game_session')
-    if (savedSession) {
-      try {
-        const session = JSON.parse(savedSession)
-        if (session.roomId === roomId.value) {
-          // 有 session，等待 WebSocket 重連
-          logInfo('VIEW_LOBBY', '偵測到 session，等待重連', session)
-          // 延遲檢查，讓重連有时间完成
-          setTimeout(() => {
-            if (!gameStore.currentRoom) {
-              uiStore.showError('重連失敗，請重新加入')
-              router.push('/')
-            }
-          }, 3000)
-          return
-        }
-      } catch (e) {
-        console.error('解析 session 失敗', e)
+
+  // 已有房間資訊 → 正常顯示
+  if (gameStore.currentRoom) return
+
+  // 沒有房間信息 → 檢查 session，等待 App.vue 自動重連
+  const savedSession = localStorage.getItem('ricky_game_session')
+  if (savedSession) {
+    try {
+      const session = JSON.parse(savedSession)
+      if (session.roomId === roomId.value) {
+        logInfo('VIEW_LOBBY', '等待 App.vue 自動重連...', session)
+        // App.vue 已呼叫 connect() + CHECK_ROOM → 自動 REJOIN
+        setTimeout(() => {
+          if (!gameStore.currentRoom) {
+            uiStore.showError('重連失敗，請重新加入')
+            router.push('/')
+          }
+        }, 5000)
+        return
       }
+    } catch (e) {
+      console.error('解析 session 失敗', e)
     }
-    uiStore.showError('房間資訊不存在，請重新加入')
-    router.push('/')
-    return
   }
+  uiStore.showError('房間資訊不存在，請重新加入')
+  router.push('/')
 })
 
 onUnmounted(() => {

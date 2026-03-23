@@ -259,7 +259,6 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useGameStore } from '@/stores/game'
-import { useUIStore } from '@/stores/ui'
 import { useSocketStore } from '@/stores/socket'
 import { useGameLogic } from '@/composables/useGameLogic'
 import PlayerAvatar from '@/components/PlayerAvatar.vue'
@@ -267,7 +266,6 @@ import PlayerAvatar from '@/components/PlayerAvatar.vue'
 const route = useRoute()
 const router = useRouter()
 const gameStore = useGameStore()
-const uiStore = useUIStore()
 const socketStore = useSocketStore()
 const gameLogic = useGameLogic()
 
@@ -431,18 +429,37 @@ const unwatchGameState = gameStore.$subscribe((_mutation, state) => {
 
 // 生命週期
 onMounted(() => {
-  // 確保是主持人且在遊戲中
-  if (!gameStore.isHost) {
-    uiStore.showError('只有主持人可以查看此頁面')
-    router.push(`/game/player/${roomId.value}`)
+  // 已有遊戲狀態 → 正常檢查
+  if (gameStore.currentRoom && gameStore.currentPlayer) {
+    if (!gameStore.isHost) {
+      router.push(`/game/player/${roomId.value}`)
+      return
+    }
+    if (gameStore.gameState !== 'playing' && gameStore.gameState !== 'show_result') {
+      router.push(`/lobby/${roomId.value}`)
+      return
+    }
     return
   }
-  
-  if (gameStore.gameState !== 'playing' && gameStore.gameState !== 'show_result') {
-    uiStore.showError('遊戲尚未開始')
-    router.push(`/lobby/${roomId.value}`)
-    return
+
+  // 沒有遊戲狀態 → 等待 App.vue 自動重連
+  const savedSession = localStorage.getItem('ricky_game_session')
+  if (savedSession) {
+    try {
+      const session = JSON.parse(savedSession)
+      if (session.roomId === roomId.value && session.isHost) {
+        console.log('📦 主持人等待自動重連...')
+        setTimeout(() => {
+          if (!gameStore.currentRoom || !gameStore.currentPlayer) {
+            localStorage.removeItem('ricky_game_session')
+            router.push('/')
+          }
+        }, 5000)
+        return
+      }
+    } catch { /* ignore */ }
   }
+  router.push('/')
 })
 
 onUnmounted(() => {

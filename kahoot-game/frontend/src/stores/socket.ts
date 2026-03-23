@@ -265,20 +265,17 @@ export const useSocketStore = defineStore('socket', () => {
       return
     }
 
-    // 房間存在且玩家在裡面 → 顯示彈窗讓使用者選擇
-    rejoinDialogData.value = {
+    // 房間存在且玩家在裡面 → 自動 REJOIN（不彈 dialog）
+    logInfo('ROOM', '自動重連中...', {
       roomId: data.roomId,
-      playerId: session.playerId,
-      playerName: data.playerName || session.playerName,
-      hostName: data.hostName || '',
-      roomStatus: data.status,
-      isHost: data.isHost || false,
-      hostToken: session.hostToken
-    }
-    showRejoinDialog.value = true
+      playerName: data.playerName,
+      isHost: data.isHost,
+      status: data.status
+    })
+    rejoinRoom(data.roomId, session.playerId, session.hostToken)
   }
 
-  // 使用者選擇「返回遊戲」
+  // 使用者選擇「返回遊戲」（保留供外部呼叫，但不再自動彈 dialog）
   const confirmRejoin = () => {
     if (!rejoinDialogData.value) return
     const { roomId, playerId, hostToken } = rejoinDialogData.value
@@ -290,12 +287,8 @@ export const useSocketStore = defineStore('socket', () => {
   // 使用者選擇「離開，回首頁」
   const cancelRejoin = () => {
     if (!rejoinDialogData.value) return
-    const { roomId } = rejoinDialogData.value
     showRejoinDialog.value = false
     rejoinDialogData.value = null
-
-    // 發送 LEAVE_ROOM 通知後端
-    sendMessage({ type: 'LEAVE_ROOM', data: { roomId } })
     localStorage.removeItem('ricky_game_session')
     gameStore.resetGame()
   }

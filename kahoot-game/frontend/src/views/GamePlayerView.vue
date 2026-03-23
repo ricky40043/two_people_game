@@ -420,52 +420,41 @@ const unwatchGameState = gameStore.$subscribe((_mutation, state) => {
 onMounted(() => {
   // 確保不是主持人
   if (gameStore.isHost) {
-    uiStore.showError('主持人請使用主持人視角')
     router.push(`/game/host/${roomId.value}`)
     return
   }
-  
-  // 如果沒有房間或玩家信息，檢查是否有保存的會話
-  if (!gameStore.currentRoom || !gameStore.currentPlayer) {
-    if (roomId.value) {
-      console.log('🔗 沒有遊戲會話，檢查 localStorage...')
-      
-      const savedSession = localStorage.getItem('ricky_game_session')
-      if (savedSession) {
-        try {
-          const session = JSON.parse(savedSession)
-          // 確認是同一個房間
-          if (session.roomId === roomId.value && session.playerId) {
-            console.log('📦 發現保存的會話，嘗試重連...')
-            if (!socketStore.isConnected) {
-              socketStore.connect()
-            }
-            // 給一些時間讓 WebSocket 連接和房間信息同步
-            setTimeout(() => {
-              if (!gameStore.currentRoom || !gameStore.currentPlayer) {
-                console.warn('⚠️ 重連失敗，導向加入頁面')
-                localStorage.removeItem('ricky_game_session')
-                router.push(`/join/${roomId.value}`)
-              }
-            }, 3000)
-            return
+
+  // 如果已有房間和玩家信息 → 正常顯示
+  if (gameStore.currentRoom && gameStore.currentPlayer) {
+    return
+  }
+
+  // 沒有房間信息 → 檢查 session，等待 App.vue 的自動重連
+  const savedSession = localStorage.getItem('ricky_game_session')
+  if (savedSession) {
+    try {
+      const session = JSON.parse(savedSession)
+      if (session.roomId === roomId.value && session.playerId) {
+        console.log('📦 等待 App.vue 自動重連...')
+        // App.vue 已呼叫 connect() + CHECK_ROOM → 自動 REJOIN
+        // 等待 5 秒讓重連完成，若失敗則導向加入頁面
+        setTimeout(() => {
+          if (!gameStore.currentRoom || !gameStore.currentPlayer) {
+            console.warn('⚠️ 重連失敗，導向加入頁面')
+            localStorage.removeItem('ricky_game_session')
+            router.push(`/join/${roomId.value}`)
           }
-        } catch (e) {
-          console.error('解析保存的會話失敗:', e)
-        }
+        }, 5000)
+        return
       }
-      
-      // 沒有有效的會話，導向加入頁面讓使用者輸入名字
-      console.log('⚠️ 沒有有效會話，導向加入頁面')
-      uiStore.showInfo('請先輸入您的暱稱加入遊戲')
-      router.push(`/join/${roomId.value}`)
-      return
-    } else {
-      uiStore.showError('遊戲資訊不存在，請重新加入')
-      router.push('/')
-      return
+    } catch (e) {
+      console.error('解析保存的會話失敗:', e)
     }
   }
+
+  // 沒有有效的會話 → 導向加入頁面
+  uiStore.showInfo('請先輸入您的暱稱加入遊戲')
+  router.push(`/join/${roomId.value}`)
 })
 
 onUnmounted(() => {
