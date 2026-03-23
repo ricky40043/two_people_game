@@ -271,12 +271,18 @@ func (h *Hub) handlePlayerLeaveInternal(client *Client) {
 		return
 	}
 
-	// 待機階段：直接移除玩家，讓其可以用任何名稱重新加入
+	// 待機階段：一般玩家直接移除，主持人標記離線（保留房間）
 	// 遊戲進行中：標記離線，保留分數以便重連
 	if player, exists := room.Players[client.ID]; exists {
 		if room.Status == models.RoomStatusWaiting {
-			delete(room.Players, client.ID)
-			log.Printf("👋 玩家 %s 已從待機房間移除（斷線）", client.PlayerName)
+			if player.IsHost {
+				// 主持人斷線：標記離線但不移除，讓主持人可以重連回來
+				player.IsConnected = false
+				log.Printf("👋 主持人 %s 標記為離線（待機階段，保留房間）", client.PlayerName)
+			} else {
+				delete(room.Players, client.ID)
+				log.Printf("👋 玩家 %s 已從待機房間移除（斷線）", client.PlayerName)
+			}
 		} else {
 			player.IsConnected = false
 			log.Printf("👋 玩家 %s 標記為離線，分數保留: %d", client.PlayerName, player.Score)
