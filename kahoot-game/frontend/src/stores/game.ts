@@ -37,7 +37,9 @@ export const useGameStore = defineStore('game', () => {
   })
 
   const sortedScores = computed(() => {
-    return [...scores.value].sort((a, b) => b.score - a.score)
+    return [...scores.value]
+      .filter(s => !currentRoom.value?.players[s.playerId]?.isHost)
+      .sort((a, b) => b.score - a.score)
   })
 
   const myScore = computed(() => {

@@ -302,7 +302,7 @@ const joinUrl = computed(() => {
 
 const playerList = computed(() => {
   if (!gameStore.currentRoom?.players) return []
-  return Object.values(gameStore.currentRoom.players)
+  return Object.values(gameStore.currentRoom.players).filter(p => !p.isHost)
 })
 
 const otherPlayers = computed(() => {

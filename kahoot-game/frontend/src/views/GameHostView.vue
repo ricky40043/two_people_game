@@ -158,25 +158,7 @@
             </div>
           </div>
 
-          <!-- 控制按鈕 -->
-          <div class="space-y-3">
-            <button
-              @click="nextQuestion"
-              :disabled="!canNextQuestion"
-              class="w-full btn"
-              :class="canNextQuestion ? 'btn-primary' : 'bg-gray-500 cursor-not-allowed'"
-            >
-              <span v-if="isLastQuestion">查看結果</span>
-              <span v-else>下一題</span>
-            </button>
-            
-            <button
-              @click="skipQuestion"
-              class="w-full btn btn-warning text-sm"
-            >
-              ⏭ 跳過這題
-            </button>
-          </div>
+          <!-- 控制按鈕（已移除手動下一題，由後端自動推進） -->
         </div>
       </div>
     </div>
@@ -302,7 +284,6 @@ const timeLeftClass = computed(() => {
 })
 
 const answerProgress = computed(() => gameLogic.answerProgress.value)
-const canNextQuestion = computed(() => gameLogic.canNextQuestion.value)
 const answeredCount = computed(() => gameLogic.answeredCount.value)
 
 const isLastQuestion = computed(() => {
@@ -390,14 +371,6 @@ const isPlayerOnline = (playerId: string) => {
 }
 
 // getCorrectAnswerText 方法已移除，「2種人」遊戲不需要正確答案概念
-
-const nextQuestion = () => {
-  socketStore.continueGame()
-}
-
-const skipQuestion = () => {
-  socketStore.continueGame()
-}
 
 const continueGame = () => {
   socketStore.continueGame()
