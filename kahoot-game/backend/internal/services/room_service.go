@@ -147,14 +147,18 @@ func (s *RoomService) AddPlayer(roomID, playerID, playerName string) (*models.Pl
 		return nil, fmt.Errorf("房間已滿")
 	}
 
-	// 待機階段：若有同名非主持人玩家（不論線上或離線），直接踢出讓新玩家全新加入
+	// 待機階段：檢查同名玩家
 	for existingID, existing := range room.Players {
 		if existing.Name == playerName {
 			if existing.IsHost {
-				// 主持人名稱不能被佔用
 				return nil, fmt.Errorf("該名稱已被主持人使用")
 			}
-			log.Printf("⚠️ 踢出同名玩家 %s (ID: %s)，讓新玩家加入", playerName, existingID)
+			if existing.IsConnected {
+				// 在線玩家佔用此名稱 → 拒絕
+				return nil, fmt.Errorf("名稱「%s」已被其他玩家使用", playerName)
+			}
+			// 離線玩家佔用此名稱 → 踢出，讓新玩家加入
+			log.Printf("⚠️ 踢出離線同名玩家 %s (ID: %s)，讓新玩家加入", playerName, existingID)
 			delete(room.Players, existingID)
 			break
 		}
