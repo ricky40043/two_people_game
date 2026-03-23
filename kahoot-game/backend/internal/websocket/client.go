@@ -441,10 +441,32 @@ func (c *Client) handleJoinAsHost(data interface{}) {
 	c.RoomID = roomID
 	c.IsHost = true
 
+	// 將主持人加入 room.Players（讓重連/離線偵測可以運作）
+	if _, exists := room.Players[c.ID]; !exists {
+		hostPlayer := &models.Player{
+			ID:          c.ID,
+			Name:        hostName,
+			RoomID:      roomID,
+			Score:       0,
+			IsHost:      true,
+			IsConnected: true,
+			LastActivity: time.Now(),
+		}
+		room.AddPlayer(hostPlayer)
+		room.HostID = c.ID
+		if err := c.hub.roomService.UpdateRoom(room); err != nil {
+			log.Printf("⚠️ 更新房間主持人玩家失敗: %v", err)
+		}
+	} else {
+		// 主持人已存在（可能是重連），更新為在線
+		room.Players[c.ID].IsConnected = true
+		c.hub.roomService.UpdateRoom(room)
+	}
+
 	// 將客戶端加入房間
 	c.hub.AddClientToRoom(c, roomID)
 
-	log.Printf("✅ 主持人 %s 加入房間 %s", hostName, roomID)
+	log.Printf("✅ 主持人 %s 加入房間 %s (playerID=%s)", hostName, roomID, c.ID)
 
 	// 發送加入成功訊息
 	roomUrl := c.hub.BuildJoinURL(roomID)
@@ -456,6 +478,7 @@ func (c *Client) handleJoinAsHost(data interface{}) {
 			"hostName":     hostName,
 			"roomId":       roomID,
 			"roomUrl":      roomUrl,
+			"hostToken":    room.HostToken,
 			"totalPlayers": room.GetPlayerCount(),
 			"players":      room.GetPlayerList(),
 		},
