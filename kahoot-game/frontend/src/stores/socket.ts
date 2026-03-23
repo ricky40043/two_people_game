@@ -934,15 +934,15 @@ export const useSocketStore = defineStore('socket', () => {
     // 恢復房間狀態
     gameStore.setRoom({
       id: data.roomId,
-      hostId: '',
-      hostName: '',
+      hostId: data.hostId || '',
+      hostName: data.hostName || '',
       status: data.roomStatus || data.gameState,
       players: {},
-      currentQuestion: data.currentQuestion,
+      currentQuestion: data.currentQuestionIndex ?? data.currentQuestion ?? 0,
       totalQuestions: data.totalQuestions,
       questionTimeLimit: 30,
-      currentHost: '',
-      timeLeft: 0,
+      currentHost: data.currentHost || '',
+      timeLeft: data.timeLeft || 0,
       questions: [],
       createdAt: new Date()
     })
@@ -971,6 +971,32 @@ export const useSocketStore = defineStore('socket', () => {
     // 更新玩家列表
     if (data.players) {
       handlePlayerJoined({ players: data.players, roomId: data.roomId })
+    }
+
+    // 恢復當前題目資料（遊戲進行中）
+    if (data.currentQuestionData) {
+      const qIndex = data.currentQuestionIndex ?? data.currentQuestion ?? 0
+      gameStore.setCurrentQuestionIndex(qIndex)
+      gameStore.setCurrentQuestion({
+        id: data.currentQuestionData.id,
+        questionText: data.currentQuestionData.questionText,
+        optionA: data.currentQuestionData.optionA,
+        optionB: data.currentQuestionData.optionB,
+        category: data.currentQuestionData.category || '',
+        timesUsed: 0,
+        isActive: true,
+        createdAt: new Date()
+      })
+    }
+
+    // 恢復當前主角
+    if (data.currentHost) {
+      gameStore.setCurrentHost(data.currentHost)
+    }
+
+    // 恢復分數
+    if (data.scores && Array.isArray(data.scores)) {
+      gameStore.updateScores(data.scores)
     }
 
     // 映射後端房間狀態到前端 gameState

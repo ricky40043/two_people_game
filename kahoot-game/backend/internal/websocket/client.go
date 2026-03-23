@@ -538,24 +538,44 @@ func (c *Client) handleRejoinRoom(data interface{}) {
 		room.Status == "answering"
 	waitingForNextQuestion := isGameInProgress
 
+	// 建立完整的重連資料
+	rejoinData := map[string]interface{}{
+		"playerId":               playerID,
+		"playerName":             player.Name,
+		"roomId":                 roomID,
+		"roomStatus":             room.Status,
+		"gameState":              room.Status,
+		"score":                  player.Score,
+		"players":                room.GetPlayerList(),
+		"currentQuestionIndex":   room.CurrentQuestion,
+		"totalQuestions":         room.TotalQuestions,
+		"waitingForNextQuestion": waitingForNextQuestion,
+		"isHost":                 isHost,
+		"canEndGame":             isHost,
+		"currentHost":            room.CurrentHost,
+		"scores":                 room.GetSortedPlayersByScore(),
+		"hostId":                 room.HostID,
+		"hostName":               room.HostName,
+		"timeLeft":               room.TimeLeft,
+		"message":                "重新連線成功！",
+	}
+
+	// 遊戲進行中時，發送當前題目的完整資訊
+	if isGameInProgress && room.CurrentQuestion < len(room.Questions) {
+		q := room.Questions[room.CurrentQuestion]
+		rejoinData["currentQuestionData"] = map[string]interface{}{
+			"id":           q.ID,
+			"questionText": q.QuestionText,
+			"optionA":      q.OptionA,
+			"optionB":      q.OptionB,
+			"category":     q.Category,
+		}
+	}
+
 	// 發送重連成功訊息
 	response := Message{
 		Type: "REJOIN_SUCCESS",
-		Data: map[string]interface{}{
-			"playerId":               playerID,
-			"playerName":             player.Name,
-			"roomId":                 roomID,
-			"roomStatus":             room.Status,
-			"gameState":              room.Status,
-			"score":                  player.Score,
-			"players":                room.GetPlayerList(),
-			"currentQuestion":        room.CurrentQuestion,
-			"totalQuestions":         room.TotalQuestions,
-			"waitingForNextQuestion": waitingForNextQuestion,
-			"isHost":                 isHost,
-			"canEndGame":             isHost,
-			"message":                "重新連線成功！",
-		},
+		Data: rejoinData,
 	}
 	c.sendMessage(&response)
 
