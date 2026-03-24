@@ -83,19 +83,12 @@ export const useGameStore = defineStore('game', () => {
   }
 
   const setCurrentQuestion = (question: Question) => {
-    // 如果題目列表為空，初始化
-    if (questions.value.length === 0) {
-      questions.value = [question]
-      currentQuestionIndex.value = 0
-    } else {
-      // 確保題目列表有足夠的長度
-      while (questions.value.length <= currentQuestionIndex.value) {
-        questions.value.push({} as Question)
-      }
-      // 更新當前題目
-      questions.value[currentQuestionIndex.value] = question
+    // 確保題目列表有足夠的長度（保留 currentQuestionIndex，不強制重設為 0）
+    while (questions.value.length <= currentQuestionIndex.value) {
+      questions.value.push({} as Question)
     }
-    
+    questions.value[currentQuestionIndex.value] = question
+
     console.log(`✅ 設置題目 ${currentQuestionIndex.value + 1}:`, question.questionText)
   }
 
