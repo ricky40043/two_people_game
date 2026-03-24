@@ -15,7 +15,7 @@
             <div class="flex items-center space-x-4">
               <div class="text-white/80">
                 <span class="text-sm">玩家數量:</span>
-                <span class="font-bold ml-1">{{ gameStore.playerCount }}/20</span>
+                <span class="font-bold ml-1">{{ gameStore.playerCount }}/100</span>
               </div>
               <button
                 @click="leaveRoom"

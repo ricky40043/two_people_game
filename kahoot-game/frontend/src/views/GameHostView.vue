@@ -53,7 +53,6 @@
                 <span class="text-2xl mr-2">👑</span>
                 <span class="font-bold text-lg">主角: {{ currentHostPlayer.name }}</span>
               </div>
-              <p class="text-white/80 mt-2">請大聲朗讀題目給其他玩家聽</p>
             </div>
 
             <!-- 題目卡片 -->

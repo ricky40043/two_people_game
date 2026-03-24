@@ -154,9 +154,17 @@ func (s *GameService) StartTwoTypesGame(room *models.Room) error {
 	return nil
 }
 
-// SelectNextHost 選擇下一個主角（輪流）
+// SelectNextHost 選擇下一個主角（輪流，排除房間主持人）
 func (s *GameService) SelectNextHost(room *models.Room, currentHost string) string {
-	players := room.GetPlayerList()
+	// 只從非主持人玩家中選擇
+	allPlayers := room.GetPlayerList()
+	players := make([]*models.Player, 0, len(allPlayers))
+	for _, p := range allPlayers {
+		if !p.IsHost {
+			players = append(players, p)
+		}
+	}
+
 	if len(players) == 0 {
 		return ""
 	}
