@@ -116,6 +116,11 @@ watch(() => gameStore.gameState, (newState) => {
   const roomId = gameStore.currentRoom.id
   const currentPath = route.path
 
+  // 在加入/首頁/創建頁面時，waiting 狀態不自動跳轉
+  // 避免舊 session 的 REJOIN_SUCCESS 把用戶從 join 頁面推走
+  const isJoinPage = currentPath === '/' || currentPath.startsWith('/join') || currentPath.startsWith('/create')
+  if (isJoinPage && newState === 'waiting') return
+
   // 計算目標路徑
   let targetPath = ''
   if (newState === 'waiting') {

@@ -265,17 +265,6 @@ const joinRoom = async () => {
       playerName: form.value.playerName
     })
 
-    // 設置當前玩家
-    gameStore.setPlayer({
-      id: '', // 將由服務器分配
-      name: form.value.playerName,
-      roomId: form.value.roomId,
-      score: 0,
-      isHost: false,
-      isConnected: true,
-      lastActivity: new Date()
-    })
-
     // 確保 WebSocket 連接
     if (!socketStore.isConnected) {
       logInfo('VIEW_JOIN_ROOM', '建立 WebSocket 連線中')
