@@ -572,7 +572,7 @@ func (c *Client) handleRejoinRoom(data interface{}) {
 		"gameState":              room.Status,
 		"score":                  player.Score,
 		"players":                room.GetPlayerList(),
-		"currentQuestionIndex":   room.CurrentQuestion,
+		"currentQuestionIndex":   room.CurrentQuestion - 1, // 前端使用 0-based index
 		"totalQuestions":         room.TotalQuestions,
 		"waitingForNextQuestion": waitingForNextQuestion,
 		"isHost":                 isHost,
@@ -585,9 +585,9 @@ func (c *Client) handleRejoinRoom(data interface{}) {
 		"message":                "重新連線成功！",
 	}
 
-	// 遊戲進行中時，發送當前題目的完整資訊
-	if isGameInProgress && room.CurrentQuestion < len(room.Questions) {
-		q := room.Questions[room.CurrentQuestion]
+	// 遊戲進行中時，發送當前題目的完整資訊（room.CurrentQuestion 是 1-based）
+	if isGameInProgress && room.CurrentQuestion >= 1 && room.CurrentQuestion <= len(room.Questions) {
+		q := room.Questions[room.CurrentQuestion-1]
 		rejoinData["currentQuestionData"] = map[string]interface{}{
 			"id":           q.ID,
 			"questionText": q.QuestionText,
@@ -787,6 +787,9 @@ func (c *Client) startQuestionTimer(timeLimit int) {
 			log.Printf("⏹️ 計時器停止: 新題目已開始")
 			return
 		}
+
+		// 更新房間剩餘時間（供重連玩家使用）
+		room.TimeLeft = i
 
 		// 廣播倒數時間
 		timerMsg := Message{

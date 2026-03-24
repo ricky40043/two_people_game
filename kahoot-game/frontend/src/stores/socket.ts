@@ -999,6 +999,11 @@ export const useSocketStore = defineStore('socket', () => {
       gameStore.updateScores(data.scores)
     }
 
+    // 恢復剩餘時間（避免重連後按鈕因 timeLeft=0 被 disable）
+    if (data.timeLeft !== undefined && data.timeLeft > 0) {
+      gameStore.updateTimeLeft(data.timeLeft)
+    }
+
     // 映射後端房間狀態到前端 gameState
     const roomStatus = data.roomStatus || data.gameState || 'waiting'
     let mappedState: 'waiting' | 'playing' | 'show_result' | 'finished' = 'waiting'
