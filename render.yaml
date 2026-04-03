@@ -1,38 +1,23 @@
-# ⚠️  Render Free 方案不支援 WebSocket（30秒強制斷線）
-# ⚠️  這個專案建議使用 Cloud Run（見 cloudrun.md），免費且無限制
-#
-# 如果堅持用 Render，至少需要 Starter ($7/月) 才能正常跑 WebSocket
-# 以下設定僅供參考
+# Render 部署設定（Docker 模式）
+# 單一服務：Go backend 同時 serve Vue frontend（從 /static 目錄）
+# 需要 Starter ($7/月) 才能正常跑 WebSocket（Free 方案 30 秒強制斷線）
 
 services:
   - type: web
-    name: kahoot-game-backend
-    runtime: go
-    plan: starter           # free 方案 WebSocket 30秒會斷，必須用 starter
+    name: kahoot-game
+    runtime: docker
+    dockerfilePath: ./kahoot-game/Dockerfile
+    dockerContext: ./kahoot-game
+    plan: starter
     region: singapore
-    buildCommand: cd kahoot-game/backend && go build -o main cmd/main.go
-    startCommand: ./kahoot-game/backend/main
     envVars:
       - key: PORT
         value: 8080
       - key: ENV
         value: production
-      - key: FRONTEND_URL
-        sync: false
+      - key: GIN_MODE
+        value: release
+      - key: DB_HOST
+        value: skip        # 記憶體模式（不需要 PostgreSQL）
       - key: CORS_ORIGINS
-        sync: false
-
-  - type: web
-    name: kahoot-game-frontend
-    runtime: static
-    buildCommand: cd kahoot-game/frontend && npm install && npm run build
-    staticPublishPath: kahoot-game/frontend/dist
-    routes:
-      - type: rewrite
-        source: /**
-        destination: /index.html
-    envVars:
-      - key: VITE_API_URL
-        sync: false
-      - key: VITE_WS_URL
-        sync: false
+        sync: false        # 在 Render Dashboard 填入你的網域，例如 https://kahoot-game.onrender.com
