@@ -6,8 +6,6 @@ services:
   - type: web
     name: kahoot-game
     runtime: docker
-    dockerfilePath: ./kahoot-game/Dockerfile
-    dockerContext: ./kahoot-game
     plan: starter
     region: singapore
     envVars:
