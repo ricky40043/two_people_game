@@ -9,6 +9,7 @@ import (
 
 	"kahoot-game/internal/models"
 	"kahoot-game/internal/services"
+	"kahoot-game/internal/stats"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -307,6 +308,8 @@ func (c *Client) handleCreateRoom(data interface{}) {
 
 	// 將客戶端加入房間
 	c.hub.AddClientToRoom(c, room.ID)
+
+	stats.Track("room_create", map[string]interface{}{"room": room.ID, "meta": map[string]interface{}{"totalQuestions": totalQuestions}})
 
 	// 生成房間 URL（根據配置調整）
 	roomUrl := c.hub.BuildJoinURL(room.ID)
@@ -693,6 +696,8 @@ func (c *Client) handleStartGame(data interface{}) {
 		log.Printf("❌ 廣播 GAME_STARTED 失敗: %v", err)
 	}
 
+	stats.Track("game_start", map[string]interface{}{"room": room.ID, "players": len(room.Players), "meta": map[string]interface{}{"totalQuestions": room.TotalQuestions}})
+
 	// 發送第一題
 	c.sendFirstQuestion()
 
@@ -948,6 +953,7 @@ func (c *Client) handleNextQuestion() {
 			c.hub.BroadcastToRoom(c.RoomID, msgBytes)
 		}
 
+		stats.Track("game_end", map[string]interface{}{"room": c.RoomID, "players": len(room.Players), "meta": map[string]interface{}{"totalQuestions": room.TotalQuestions}})
 		log.Printf("🏁 房間 %s 遊戲結束，發送詳細統計給所有玩家", c.RoomID)
 	} else {
 		// 檢查是否還有題目可以發送
@@ -1388,6 +1394,7 @@ func (c *Client) handleForceEndGame(data interface{}) {
 	}
 
 	log.Printf("🛑 主持人 %s 強制結束房間 %s 的遊戲", c.PlayerName, c.RoomID)
+	stats.Track("game_end", map[string]interface{}{"room": c.RoomID, "players": len(room.Players), "meta": map[string]interface{}{"forced": true}})
 
 	// 強制結束遊戲
 	room.Status = models.RoomStatusFinished
