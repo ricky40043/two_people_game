@@ -162,44 +162,49 @@
       </div>
     </div>
 
-    <!-- 題目結果顯示 -->
-    <div v-else-if="gameStore.gameState === 'show_result'" class="h-screen flex flex-col justify-center p-8">
-      <div class="max-w-4xl mx-auto w-full text-center">
-        <div class="question-card fade-in">
-          <h2 class="text-2xl font-bold text-gray-800 mb-6">
-            第 {{ currentQuestionNumber }} 題結果
-          </h2>
-          
-          <!-- 主角答案 -->
-          <div v-if="hostAnswerInfo.show" class="mb-8">
-            <div class="text-lg text-gray-600 mb-2">主角選擇:</div>
-            <div class="text-3xl font-bold text-blue-600 mb-4">
-              選項 {{ hostAnswerInfo.answer }} - {{ hostAnswerInfo.text }}
-            </div>
-            <div class="text-gray-600 text-lg">
-              主角: {{ hostAnswerInfo.playerName }}
-            </div>
+    <!-- 題目結果顯示 (白板大螢幕) -->
+    <div v-else-if="gameStore.gameState === 'show_result'" class="min-h-screen flex flex-col justify-center p-6 md:p-10 overflow-y-auto">
+      <div class="max-w-5xl mx-auto w-full text-center">
+        <div class="question-card fade-in bg-slate-900/90 text-white backdrop-blur-xl border border-white/20 shadow-2xl p-6 md:p-8 rounded-3xl">
+          <div class="flex items-center justify-between border-b border-white/10 pb-4 mb-6">
+            <span class="text-white/70 font-bold text-lg">第 {{ currentQuestionNumber }} 題結果結算</span>
+            <span v-if="hostAnswerInfo.show" class="bg-blue-500/30 text-blue-300 border border-blue-400/30 font-bold px-4 py-1 rounded-full text-sm">
+              👑 主角 {{ hostAnswerInfo.playerName }} 選擇：選項 {{ hostAnswerInfo.answer }} ({{ hostAnswerInfo.text }})
+            </span>
           </div>
 
-          <!-- 猜測統計 -->
-          <div class="grid grid-cols-2 gap-8 mb-8">
-            <div class="text-center">
-              <div class="text-4xl font-bold text-green-600">{{ correctGuesses }}</div>
-              <div class="text-gray-600">猜對人數</div>
-            </div>
-            <div class="text-center">
-              <div class="text-4xl font-bold text-red-600">{{ wrongGuesses }}</div>
-              <div class="text-gray-600">猜錯人數</div>
-            </div>
+          <!-- 白板主要橫向長條圖與動態排行榜 -->
+          <div class="my-4">
+            <h3 class="text-2xl font-black text-yellow-300 text-left mb-2 flex items-center">
+              <span>🏆 白板最新戰況 (前三名)</span>
+            </h3>
+            <LeaderboardBarChart 
+              :scores="gameStore.sortedScores" 
+              :current-host-id="gameStore.currentHost"
+            />
           </div>
 
-          <button
-            @click="continueGame"
-            class="btn btn-primary text-xl py-4 px-8"
-          >
-            <span v-if="isLastQuestion">🏆 查看最終結果</span>
-            <span v-else>▶️ 繼續遊戲</span>
-          </button>
+          <!-- 猜測統計與繼續按鈕 -->
+          <div class="flex flex-col md:flex-row items-center justify-between bg-black/30 rounded-2xl p-4 mt-6">
+            <div class="flex items-center space-x-6 mb-4 md:mb-0">
+              <div class="text-left">
+                <span class="text-gray-400 text-xs block">猜對人數</span>
+                <span class="text-2xl font-black text-green-400">{{ correctGuesses }} 人</span>
+              </div>
+              <div class="text-left">
+                <span class="text-gray-400 text-xs block">猜錯人數</span>
+                <span class="text-2xl font-black text-red-400">{{ wrongGuesses }} 人</span>
+              </div>
+            </div>
+
+            <button
+              @click="continueGame"
+              class="btn btn-primary text-lg md:text-xl py-3 px-8 rounded-xl shadow-lg hover:scale-105 transition-all"
+            >
+              <span v-if="isLastQuestion">🏆 查看最終總結果</span>
+              <span v-else>▶️ 進入下一題</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -243,6 +248,7 @@ import { useGameStore } from '@/stores/game'
 import { useSocketStore } from '@/stores/socket'
 import { useGameLogic } from '@/composables/useGameLogic'
 import PlayerAvatar from '@/components/PlayerAvatar.vue'
+import LeaderboardBarChart from '@/components/LeaderboardBarChart.vue'
 
 const route = useRoute()
 const router = useRouter()

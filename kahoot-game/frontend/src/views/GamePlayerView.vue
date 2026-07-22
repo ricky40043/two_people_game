@@ -175,57 +175,64 @@
       </div>
     </div>
 
-    <!-- 題目結果 -->
+    <!-- 題目結果 (玩家個人視角) -->
     <div v-else-if="gameStore.gameState === 'show_result'" class="h-screen flex flex-col justify-center p-4">
-      <div class="max-w-2xl mx-auto w-full text-center">
-        <div class="bg-white rounded-3xl p-8 shadow-2xl fade-in">
-          <h2 class="text-2xl font-bold text-gray-800 mb-6">
-            第 {{ currentQuestionNumber }} 題結果
+      <div class="max-w-md mx-auto w-full text-center">
+        <div class="bg-slate-900/90 text-white rounded-3xl p-6 md:p-8 shadow-2xl backdrop-blur-xl border border-white/20 fade-in">
+          <h2 class="text-xl font-bold text-white/80 mb-4">
+            第 {{ currentQuestionNumber }} 題本題結算
           </h2>
           
-          <!-- 答題結果 -->
-          <div class="mb-6">
-            <div class="text-lg text-gray-600 mb-2">主角選擇:</div>
-            <div class="text-3xl font-bold text-blue-600 mb-4">
-              等待結果公布...
-            </div>
+          <!-- 個人成績與名次核心亮點卡 -->
+          <div class="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 rounded-2xl p-6 mb-6 shadow-lg border border-white/20 transform transition-all duration-300 hover:scale-[1.02]">
+            <div class="text-white/80 font-bold text-xs uppercase tracking-wider mb-1">您的當前成績與排名</div>
             
-            <!-- 個人結果 -->
-            <div class="bg-gray-100 rounded-xl p-4 mb-4">
-              <div class="text-lg font-semibold mb-2">您的選擇</div>
-              <div class="grid grid-cols-2 gap-4">
-                <div>
-                  <div class="text-2xl font-bold text-blue-600">
-                    {{ selectedAnswer ? `選項 ${selectedAnswer}` : '未作答' }}
-                  </div>
-                  <div class="text-sm text-gray-600">{{ isMyTurn ? '您是主角' : '您的猜測' }}</div>
+            <div class="flex items-center justify-around py-3">
+              <!-- 當前名次 -->
+              <div class="text-center">
+                <div class="text-4xl md:text-5xl font-black text-yellow-300 drop-shadow-md">
+                  #{{ gameStore.myRank }}
                 </div>
-                <div>
-                  <div class="text-2xl font-bold text-blue-600">+{{ scoreGained }}</div>
-                  <div class="text-sm text-gray-600">獲得分數</div>
+                <div class="text-xs text-white/80 font-semibold mt-1">
+                  名次 (共 {{ gameStore.playerCount }} 人)
                 </div>
               </div>
-            </div>
-            
-            <!-- 說明 -->
-            <div v-if="gameStore.currentQuestion?.explanation" class="text-gray-600 text-sm">
-              {{ gameStore.currentQuestion.explanation }}
+
+              <!-- 分隔線 -->
+              <div class="w-px h-12 bg-white/30"></div>
+
+              <!-- 最新總分 -->
+              <div class="text-center">
+                <div class="text-4xl md:text-5xl font-black text-white drop-shadow-md">
+                  {{ gameStore.myScore }}
+                </div>
+                <div class="text-xs text-white/80 font-semibold mt-1">
+                  當前總分
+                  <span v-if="scoreGained > 0" class="text-green-300 font-extrabold ml-1 animate-bounce inline-block">
+                    (+{{ scoreGained }})
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
 
-          <!-- 當前排名 -->
-          <div class="bg-gradient-to-r from-purple-100 to-blue-100 rounded-xl p-4">
-            <div class="text-lg font-semibold text-gray-800 mb-2">當前排名</div>
-            <div class="flex items-center justify-center space-x-6">
-              <div class="text-center">
-                <div class="text-3xl font-bold text-purple-600">#{{ gameStore.myRank }}</div>
-                <div class="text-sm text-gray-600">排名</div>
-              </div>
-              <div class="text-center">
-                <div class="text-3xl font-bold text-blue-600">{{ gameStore.myScore }}</div>
-                <div class="text-sm text-gray-600">總分</div>
-              </div>
+          <!-- 本題個人選擇與得分資訊 -->
+          <div class="bg-white/10 rounded-2xl p-4 mb-4 border border-white/10 text-left">
+            <div class="flex justify-between items-center text-sm">
+              <span class="text-white/70">您的本題選擇：</span>
+              <span class="font-bold text-white text-base">
+                {{ selectedAnswer ? `選項 ${selectedAnswer}` : '未作答' }}
+                <span class="text-xs opacity-75 font-normal ml-1">({{ isMyTurn ? '主角' : '猜測者' }})</span>
+              </span>
             </div>
+            <div class="flex justify-between items-center text-sm mt-2 pt-2 border-t border-white/10">
+              <span class="text-white/70">本題獲得分數：</span>
+              <span class="font-black text-green-400 text-lg">+{{ scoreGained }} 分</span>
+            </div>
+          </div>
+          
+          <div class="text-white/60 text-xs animate-pulse">
+            ⏳ 主持人準備推進下一題中...
           </div>
         </div>
       </div>
