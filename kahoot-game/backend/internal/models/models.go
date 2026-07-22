@@ -11,6 +11,7 @@ type Player struct {
 	RoomID         string      `json:"roomId"`
 	Score          int         `json:"score"`
 	CorrectAnswers int         `json:"correctAnswers"` // 累計答對次數
+	TimesAsHost    int         `json:"timesAsHost"`    // 當前遊戲中擔任主角的次數
 	IsHost         bool        `json:"isHost"`         // 是否為房間主持人
 	IsConnected    bool        `json:"isConnected"`
 	LastActivity   time.Time   `json:"lastActivity"`

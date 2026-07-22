@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"math/rand"
+	"sort"
 	"time"
 
 	"kahoot-game/internal/models"
@@ -141,9 +141,10 @@ func (s *GameService) StartTwoTypesGame(room *models.Room) error {
 	room.CurrentQuestion = 1
 	room.Answers = make(map[string]*models.Answer)
 
-	// 重置所有玩家分數
+	// 重置所有玩家分數與主角擔任次數
 	for _, player := range room.Players {
 		player.Score = 0
+		player.TimesAsHost = 0
 	}
 
 	// 設定第一題的主角
@@ -154,9 +155,9 @@ func (s *GameService) StartTwoTypesGame(room *models.Room) error {
 	return nil
 }
 
-// SelectNextHost 選擇下一個主角（輪流，排除房間主持人）
+// SelectNextHost 選擇下一個主角（嚴格公平輪播，保證每個人都輪過一次後才進入下一輪）
 func (s *GameService) SelectNextHost(room *models.Room, currentHost string) string {
-	// 只從非主持人玩家中選擇
+	// 1. 只從非房間主持人中選擇
 	allPlayers := room.GetPlayerList()
 	players := make([]*models.Player, 0, len(allPlayers))
 	for _, p := range allPlayers {
@@ -169,22 +170,46 @@ func (s *GameService) SelectNextHost(room *models.Room, currentHost string) stri
 		return ""
 	}
 
-	// 如果是第一題，隨機選擇
-	if currentHost == "" {
-		rand.Seed(time.Now().UnixNano())
-		return players[rand.Intn(len(players))].ID
-	}
+	// 2. 對 players 按 ID 固定排序，消弭 Map 隨機疊代不穩定問題
+	sort.Slice(players, func(i, j int) bool {
+		return players[i].ID < players[j].ID
+	})
 
-	// 找到當前主角的位置，選擇下一個
-	for i, player := range players {
-		if player.ID == currentHost {
-			nextIndex := (i + 1) % len(players)
-			return players[nextIndex].ID
+	// 3. 找出目前當主角次數最少者 minTimes
+	minTimes := players[0].TimesAsHost
+	for _, p := range players {
+		if p.TimesAsHost < minTimes {
+			minTimes = p.TimesAsHost
 		}
 	}
 
-	// 如果找不到當前主角，隨機選擇
-	return players[rand.Intn(len(players))].ID
+	// 4. 收集所有 TimesAsHost == minTimes 的候選人
+	candidates := make([]*models.Player, 0)
+	for _, p := range players {
+		if p.TimesAsHost == minTimes {
+			candidates = append(candidates, p)
+		}
+	}
+
+	// 5. 在候選人中，優先選擇非 currentHost 的玩家（絕對避開連續選中同一人）
+	var selected *models.Player
+	for _, p := range candidates {
+		if p.ID != currentHost {
+			selected = p
+			break
+		}
+	}
+
+	// 如果所有候選人都跟 currentHost 一樣（例如全場只有 1 位玩家），則選擇 candidates[0]
+	if selected == nil {
+		selected = candidates[0]
+	}
+
+	// 6. 更新選中者的當主角次數
+	selected.TimesAsHost++
+	log.Printf("👑 [主角輪替] 選擇主角: %s (ID: %s), 第 %d 次當主角", selected.Name, selected.ID, selected.TimesAsHost)
+
+	return selected.ID
 }
 
 // SubmitTwoTypesAnswer 提交「2種人」答案
