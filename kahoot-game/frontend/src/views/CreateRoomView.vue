@@ -44,29 +44,7 @@
 
 
 
-          <!-- 答題時間 -->
-          <div>
-            <label class="block text-white/90 font-medium mb-2">
-              每題答題時間
-            </label>
-            <div class="grid grid-cols-3 gap-2">
-              <button
-                v-for="time in answerTimes"
-                :key="time.value"
-                type="button"
-                @click="form.questionTimeLimit = time.value"
-                :class="[
-                  'py-2 px-3 rounded-lg border-2 transition-all text-sm font-medium',
-                  form.questionTimeLimit === time.value
-                    ? 'border-white bg-white text-gray-800'
-                    : 'border-white/30 text-white hover:border-white/60'
-                ]"
-                :disabled="isSubmitting"
-              >
-                {{ time.label }}
-              </button>
-            </div>
-          </div>
+
 
           <!-- 遊戲預覽 -->
           <div class="bg-white/10 rounded-xl p-4 border border-white/20">
@@ -156,13 +134,6 @@ const form = ref({
 })
 
 const isSubmitting = ref(false)
-
-// 選項數據
-const answerTimes = [
-  { label: '15秒', value: 15 },
-  { label: '30秒', value: 30 },
-  { label: '45秒', value: 45 }
-]
 
 // 計算屬性
 const canSubmit = computed(() => {

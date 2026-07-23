@@ -604,6 +604,22 @@ func (c *Client) handleRejoinRoom(data interface{}) {
 		}
 	}
 
+	// 同步本題所有人作答狀態，避免重連後答題進度條停留在 1/2
+	playerAnswerStatus := make(map[string]interface{})
+	if room.Answers != nil {
+		for pid, ans := range room.Answers {
+			statusInfo := map[string]interface{}{
+				"hasAnswered": true,
+				"isHost":      ans.WasHost,
+			}
+			if pid == playerID || isHost {
+				statusInfo["answer"] = ans.Answer
+			}
+			playerAnswerStatus[pid] = statusInfo
+		}
+	}
+	rejoinData["playerAnswerStatus"] = playerAnswerStatus
+
 	// 發送重連成功訊息
 	response := Message{
 		Type: "REJOIN_SUCCESS",
@@ -1473,23 +1489,11 @@ func (c *Client) handleUpdateRoomSettings(data interface{}) {
 	}
 
 	roomID, _ := dataMap["roomId"].(string)
-	totalQuestionsRaw, _ := dataMap["totalQuestions"]
-
-	var totalQuestions int
-	switch v := totalQuestionsRaw.(type) {
-	case float64:
-		totalQuestions = int(v)
-	case int:
-		totalQuestions = v
-	}
+	totalQuestionsRaw, hasTotal := dataMap["totalQuestions"]
+	timeLimitRaw, hasTimeLimit := dataMap["questionTimeLimit"]
 
 	if roomID == "" {
 		c.sendError("INVALID_DATA", "房間ID不能為空")
-		return
-	}
-
-	if totalQuestions < 1 || totalQuestions > 50 {
-		c.sendError("INVALID_DATA", "題目數量必須在 1 至 50 題之間")
 		return
 	}
 
@@ -1505,20 +1509,46 @@ func (c *Client) handleUpdateRoomSettings(data interface{}) {
 		return
 	}
 
-	room.TotalQuestions = totalQuestions
+	if hasTotal {
+		var totalQuestions int
+		switch v := totalQuestionsRaw.(type) {
+		case float64:
+			totalQuestions = int(v)
+		case int:
+			totalQuestions = v
+		}
+		if totalQuestions >= 1 && totalQuestions <= 50 {
+			room.TotalQuestions = totalQuestions
+		}
+	}
+
+	if hasTimeLimit {
+		var questionTimeLimit int
+		switch v := timeLimitRaw.(type) {
+		case float64:
+			questionTimeLimit = int(v)
+		case int:
+			questionTimeLimit = v
+		}
+		if questionTimeLimit >= 10 && questionTimeLimit <= 120 {
+			room.QuestionTimeLimit = questionTimeLimit
+		}
+	}
+
 	if err := c.hub.roomService.UpdateRoom(room); err != nil {
 		c.sendError("UPDATE_FAILED", "更新房間設定失敗")
 		return
 	}
 
-	log.Printf("⚙️ [房間設定] 房間 %s 題目數量更新為: %d 題", roomID, totalQuestions)
+	log.Printf("⚙️ [房間設定] 房間 %s 設定已更新 (題數: %d, 秒數: %d)", roomID, room.TotalQuestions, room.QuestionTimeLimit)
 
 	// 廣播給房間內所有玩家
 	updateMsg := Message{
 		Type: "ROOM_SETTINGS_UPDATED",
 		Data: map[string]interface{}{
-			"roomId":         roomID,
-			"totalQuestions": totalQuestions,
+			"roomId":            roomID,
+			"totalQuestions":    room.TotalQuestions,
+			"questionTimeLimit": room.QuestionTimeLimit,
 		},
 	}
 

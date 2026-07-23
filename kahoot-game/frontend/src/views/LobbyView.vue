@@ -160,9 +160,28 @@
                   </div>
                 </div>
 
-                <div class="flex justify-between items-center text-white/80">
-                  <span>答題時間：</span>
-                  <span class="font-medium text-white">{{ gameStore.currentRoom?.questionTimeLimit }} 秒/題</span>
+                <!-- 答題時間選擇 (房主可調整，全員同步) -->
+                <div>
+                  <div class="flex justify-between items-center text-white/80 mb-2">
+                    <span>每題答題時間：</span>
+                    <span class="font-bold text-yellow-300 text-base">{{ gameStore.currentRoom?.questionTimeLimit }} 秒</span>
+                  </div>
+                  <div v-if="gameStore.isHost" class="grid grid-cols-4 gap-1.5 mt-1">
+                    <button
+                      v-for="time in [15, 30, 45, 60]"
+                      :key="time"
+                      type="button"
+                      @click="setQuestionTimeLimit(time)"
+                      :class="[
+                        'py-1.5 px-1 rounded-lg border transition-all text-xs font-bold text-center',
+                        gameStore.currentRoom?.questionTimeLimit === time
+                          ? 'border-yellow-400 bg-yellow-400 text-black shadow-md'
+                          : 'border-white/20 bg-white/10 text-white hover:bg-white/20'
+                      ]"
+                    >
+                      {{ time }}秒
+                    </button>
+                  </div>
                 </div>
                 <div class="flex justify-between items-center text-white/80">
                   <span>預計時長：</span>
@@ -371,6 +390,11 @@ const onCustomInput = () => {
 const updateQuestionsCount = (count: number) => {
   if (!gameStore.isHost || !roomId.value) return
   socketStore.updateRoomSettings(roomId.value, { totalQuestions: count })
+}
+
+const setQuestionTimeLimit = (time: number) => {
+  if (!gameStore.isHost || !roomId.value) return
+  socketStore.updateRoomSettings(roomId.value, { questionTimeLimit: time })
 }
 
 // 計算屬性

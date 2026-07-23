@@ -1019,6 +1019,18 @@ export const useSocketStore = defineStore('socket', () => {
       gameStore.updateTimeLeft(data.timeLeft)
     }
 
+    // 恢復全場所有人本題答題狀態 (避免 1/2 答題進度卡死)
+    if (data.playerAnswerStatus && typeof data.playerAnswerStatus === 'object') {
+      Object.entries(data.playerAnswerStatus).forEach(([pid, statusInfo]: [string, any]) => {
+        gameStore.updatePlayerAnswerStatus(pid, {
+          hasAnswered: statusInfo.hasAnswered,
+          answer: statusInfo.answer,
+          isHost: statusInfo.isHost
+        })
+      })
+      console.log('🔄 重連成功，已同步本題全場答題狀態:', data.playerAnswerStatus)
+    }
+
     // 映射後端房間狀態到前端 gameState
     const roomStatus = data.roomStatus || data.gameState || 'waiting'
     let mappedState: 'waiting' | 'playing' | 'show_result' | 'finished' = 'waiting'
@@ -1255,8 +1267,11 @@ export const useSocketStore = defineStore('socket', () => {
     logInfo('ROOM', '收到房間設定更新', data)
     if (data.totalQuestions) {
       gameStore.setTotalQuestions(data.totalQuestions)
-      uiStore.showInfo(`題目數量已更新為 ${data.totalQuestions} 題`)
     }
+    if (data.questionTimeLimit) {
+      gameStore.setQuestionTimeLimit(data.questionTimeLimit)
+    }
+    uiStore.showInfo(`房間設定已更新 (題數: ${data.totalQuestions || gameStore.currentRoom?.totalQuestions}題, 時間: ${data.questionTimeLimit || gameStore.currentRoom?.questionTimeLimit}秒)`)
   }
 
   const handleRoomResetToLobby = (data: any) => {
@@ -1274,13 +1289,14 @@ export const useSocketStore = defineStore('socket', () => {
     })
   }
 
-  const updateRoomSettings = (roomId: string, settings: { totalQuestions: number }) => {
+  const updateRoomSettings = (roomId: string, settings: { totalQuestions?: number, questionTimeLimit?: number }) => {
     logInfo('ROOM', '發送更新房間設定', { roomId, settings })
     sendMessage({
       type: 'UPDATE_ROOM_SETTINGS',
       data: {
         roomId,
-        totalQuestions: settings.totalQuestions
+        totalQuestions: settings.totalQuestions,
+        questionTimeLimit: settings.questionTimeLimit
       }
     })
   }

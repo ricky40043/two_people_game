@@ -166,7 +166,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSocketStore } from '@/stores/socket'
 import { useGameStore } from '@/stores/game'
@@ -262,9 +262,7 @@ const canSubmit = computed(() => {
   )
 })
 
-const canUseCamera = computed(() => {
-  return 'mediaDevices' in navigator && 'getUserMedia' in navigator.mediaDevices
-})
+
 
 // 方法
 const formatRoomId = () => {
@@ -342,21 +340,56 @@ const joinRoom = async () => {
   }
 }
 
-const startQRScanner = () => {
-  // 檢查是否在 HTTPS 環境或本地環境
-  const isHttps = window.location.protocol === 'https:'
-  const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  
-  if (!isHttps && !isLocalhost) {
-    uiStore.showError('QR 掃描需要在 HTTPS 環境或本地 localhost 下使用')
-    return
-  }
-  
-  if (!canUseCamera.value) {
-    uiStore.showError('您的設備不支援相機功能，請檢查瀏覽器權限設置')
-    return
-  }
+const startQRScanner = async () => {
   showQRScanner.value = true
+  await nextTick()
+
+  try {
+    if (html5QrCode) {
+      try { await html5QrCode.stop() } catch {}
+    }
+
+    html5QrCode = new Html5Qrcode('qr-reader')
+    await html5QrCode.start(
+      { facingMode: 'environment' },
+      {
+        fps: 10,
+        qrbox: { width: 200, height: 200 }
+      },
+      (decodedText) => {
+        handleScanResult(decodedText)
+      },
+      () => {
+        // 忽略單幀掃描過度
+      }
+    )
+  } catch (error) {
+    logError('VIEW_JOIN_ROOM', '相機啟動失敗', error)
+    uiStore.showError('無法存取相機鏡頭，請確認瀏覽器已允許相機權限（或使用 HTTPS / localhost）')
+    showQRScanner.value = false
+  }
+}
+
+const handleScanResult = (scannedText: string) => {
+  logInfo('VIEW_JOIN_ROOM', 'QR 碼掃描成功', { scannedText })
+  let code = scannedText.trim()
+  
+  // 嘗試解析帶有 /join/ABC123 的 URL
+  const match = code.match(/\/join\/([A-Za-z0-9]{6})/i)
+  if (match && match[1]) {
+    code = match[1].toUpperCase()
+  } else if (code.length === 6) {
+    code = code.toUpperCase()
+  }
+
+  if (code.length === 6) {
+    form.value.roomId = code
+    uiStore.showSuccess(`識別成功！房間代碼: ${code}`)
+    closeQRScanner()
+    checkRoomStatus(code)
+  } else {
+    uiStore.showWarning('無法識別此 QR Code，請掃描主持人畫面上的房間 QR Code')
+  }
 }
 
 const closeQRScanner = async () => {
