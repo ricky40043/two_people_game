@@ -110,23 +110,18 @@ const uiStore = useUIStore()
 
 // 重連成功後，根據遊戲狀態導航到正確頁面
 // 適用於所有頁面（刷新後 REJOIN_SUCCESS 會觸發此 watcher）
-watch(() => gameStore.gameState, (newState) => {
-  if (!gameStore.currentRoom || !gameStore.currentPlayer) return
+watch([() => gameStore.gameState, () => gameStore.currentPlayer?.id], ([newState, playerId]) => {
+  if (!gameStore.currentRoom || !playerId) return
 
   const roomId = gameStore.currentRoom.id
   const currentPath = route.path
-
-  // 在加入/首頁/創建頁面時，waiting 狀態不自動跳轉
-  // 避免舊 session 的 REJOIN_SUCCESS 把用戶從 join 頁面推走
-  const isJoinPage = currentPath === '/' || currentPath.startsWith('/join') || currentPath.startsWith('/create')
-  if (isJoinPage && newState === 'waiting') return
 
   // 計算目標路徑
   let targetPath = ''
   if (newState === 'waiting') {
     targetPath = `/lobby/${roomId}`
   } else if (newState === 'playing' || newState === 'show_result') {
-    targetPath = gameStore.currentPlayer.isHost
+    targetPath = gameStore.currentPlayer?.isHost
       ? `/game/host/${roomId}`
       : `/game/player/${roomId}`
   } else if (newState === 'finished') {
@@ -135,6 +130,7 @@ watch(() => gameStore.gameState, (newState) => {
 
   // 只在目標路徑與當前路徑不同時導航（避免無限迴圈）
   if (targetPath && currentPath !== targetPath) {
+    console.log(`🔄 [重連路由導向] 當前: ${currentPath} → 目標: ${targetPath}`)
     router.push(targetPath)
   }
 })
