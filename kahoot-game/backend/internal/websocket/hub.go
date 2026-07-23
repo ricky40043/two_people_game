@@ -243,10 +243,15 @@ func (h *Hub) softLeaveRoom(client *Client) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 
+	if room, err := h.roomService.GetRoom(client.RoomID); err == nil {
+		delete(room.Players, client.ID)
+		h.roomService.UpdateRoom(room)
+	}
+
 	h.handlePlayerLeaveInternal(client)
 	h.removeClientFromRoom(client, client.RoomID)
 
-	log.Printf("👋 玩家 %s 軟離開房間 %s（連線保持）", client.PlayerName, client.RoomID)
+	log.Printf("👋 玩家 %s 手動離開房間 %s（連線保持）", client.PlayerName, client.RoomID)
 
 	client.RoomID = ""
 	client.PlayerName = ""
@@ -271,21 +276,13 @@ func (h *Hub) handlePlayerLeaveInternal(client *Client) {
 		return
 	}
 
-	// 待機階段：一般玩家直接移除，主持人標記離線（保留房間）
-	// 遊戲進行中：標記離線，保留分數以便重連
+	// 無論待機階段或遊戲進行中，斷線均標記為離線保留玩家資料，便於重連
 	if player, exists := room.Players[client.ID]; exists {
-		if room.Status == models.RoomStatusWaiting {
-			if player.IsHost {
-				// 主持人斷線：標記離線但不移除，讓主持人可以重連回來
-				player.IsConnected = false
-				log.Printf("👋 主持人 %s 標記為離線（待機階段，保留房間）", client.PlayerName)
-			} else {
-				delete(room.Players, client.ID)
-				log.Printf("👋 玩家 %s 已從待機房間移除（斷線）", client.PlayerName)
-			}
+		player.IsConnected = false
+		if player.IsHost {
+			log.Printf("👋 主持人 %s 標記為離線（保留房間與連線）", client.PlayerName)
 		} else {
-			player.IsConnected = false
-			log.Printf("👋 玩家 %s 標記為離線，分數保留: %d", client.PlayerName, player.Score)
+			log.Printf("👋 玩家 %s 標記為離線（保留資料以供重連）", client.PlayerName)
 		}
 		h.roomService.UpdateRoom(room)
 	} else {

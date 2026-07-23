@@ -1033,6 +1033,28 @@ export const useSocketStore = defineStore('socket', () => {
     }
     gameStore.setGameState(mappedState)
 
+    // 重連成功後的路由自動引導跳轉
+    const currentPath = window.location.pathname
+    if (mappedState === 'waiting') {
+      // 大廳/遊戲前階段：若不在 /lobby/${data.roomId}，自動跳轉回大廳頁面！
+      const targetLobby = `/lobby/${data.roomId}`
+      if (!currentPath.startsWith(targetLobby)) {
+        logInfo('ROOM', '重連大廳成功，自動跳轉回到大廳頁面', { targetLobby })
+        window.location.href = targetLobby
+      }
+    } else if (mappedState === 'playing' || mappedState === 'show_result') {
+      const targetGame = isHost ? `/game/host/${data.roomId}` : `/game/player/${data.roomId}`
+      if (!currentPath.startsWith(targetGame)) {
+        logInfo('ROOM', '重連遊戲中成功，自動跳轉回到遊戲頁面', { targetGame })
+        window.location.href = targetGame
+      }
+    } else if (mappedState === 'finished') {
+      const targetResult = `/results/${data.roomId}`
+      if (!currentPath.startsWith(targetResult)) {
+        window.location.href = targetResult
+      }
+    }
+
     uiStore.showSuccess('歡迎回來，連線已恢復！')
   }
 
