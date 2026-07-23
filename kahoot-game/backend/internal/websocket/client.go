@@ -189,6 +189,8 @@ func (c *Client) handleMessage(msg *Message) {
 		c.handleSubmitAnswer(msg.Data)
 	case "LEAVE_ROOM":
 		c.handleLeaveRoom(msg.Data)
+	case "UPDATE_ROOM_SETTINGS":
+		c.handleUpdateRoomSettings(msg.Data)
 	case "PING":
 		c.handlePing()
 	default:
@@ -1458,6 +1460,69 @@ func (c *Client) sendError(code, message string) {
 		},
 	}
 	c.sendMessage(&errorMsg)
+}
+
+// handleUpdateRoomSettings 處理更新房間題目設定
+func (c *Client) handleUpdateRoomSettings(data interface{}) {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		c.sendError("INVALID_DATA", "更新設定資料格式錯誤")
+		return
+	}
+
+	roomID, _ := dataMap["roomId"].(string)
+	totalQuestionsRaw, _ := dataMap["totalQuestions"]
+
+	var totalQuestions int
+	switch v := totalQuestionsRaw.(type) {
+	case float64:
+		totalQuestions = int(v)
+	case int:
+		totalQuestions = v
+	}
+
+	if roomID == "" {
+		c.sendError("INVALID_DATA", "房間ID不能為空")
+		return
+	}
+
+	if totalQuestions < 1 || totalQuestions > 50 {
+		c.sendError("INVALID_DATA", "題目數量必須在 1 至 50 題之間")
+		return
+	}
+
+	room, err := c.hub.roomService.GetRoom(roomID)
+	if err != nil {
+		c.sendError("ROOM_NOT_FOUND", "房間不存在")
+		return
+	}
+
+	// 檢查權限：只允許主持人修改
+	if !c.IsHost && room.HostID != c.ID {
+		c.sendError("PERMISSION_DENIED", "只有主持人可以修改房間設定")
+		return
+	}
+
+	room.TotalQuestions = totalQuestions
+	if err := c.hub.roomService.UpdateRoom(room); err != nil {
+		c.sendError("UPDATE_FAILED", "更新房間設定失敗")
+		return
+	}
+
+	log.Printf("⚙️ [房間設定] 房間 %s 題目數量更新為: %d 題", roomID, totalQuestions)
+
+	// 廣播給房間內所有玩家
+	updateMsg := Message{
+		Type: "ROOM_SETTINGS_UPDATED",
+		Data: map[string]interface{}{
+			"roomId":         roomID,
+			"totalQuestions": totalQuestions,
+		},
+	}
+
+	if msgBytes, err := json.Marshal(updateMsg); err == nil {
+		c.hub.BroadcastToRoom(roomID, msgBytes)
+	}
 }
 
 // ServeWS 處理 WebSocket 連線升級

@@ -16,13 +16,30 @@
 
       <!-- 表單卡片 -->
       <div class="card card-body fade-in">
-        <div class="text-center mb-8">
-          <div class="text-4xl mb-4">🚪</div>
-          <h1 class="text-2xl font-bold text-white mb-2">加入房間</h1>
-          <p class="text-white/70">輸入房間代碼和您的暱稱</p>
+        <div class="text-center mb-6">
+          <div class="text-4xl mb-3">{{ roomExpired ? '⚠️' : '🚪' }}</div>
+          <h1 class="text-2xl font-bold text-white mb-2">{{ roomExpired ? '房間不可用' : '加入房間' }}</h1>
+          <p class="text-white/70">{{ roomExpired ? roomExpiredReason : '輸入房間代碼和您的暱稱' }}</p>
         </div>
 
-        <form @submit.prevent="joinRoom" class="space-y-6">
+        <!-- 房間過期 / 不存在 警告卡片 -->
+        <div v-if="roomExpired" class="space-y-4 text-center">
+          <div class="bg-red-500/20 border border-red-400/50 rounded-2xl p-6 text-red-100 mb-6">
+            <p class="font-bold text-lg mb-2">掃描連結/房間已失效</p>
+            <p class="text-xs opacity-90">此房間已被主持人關閉、過期關閉或遊戲已經開始。</p>
+          </div>
+
+          <router-link to="/" class="btn btn-primary w-full py-4 text-lg font-bold block text-center shadow-lg">
+            🏠 返回主頁
+          </router-link>
+
+          <button @click="roomExpired = false; form.roomId = ''" class="btn btn-outline w-full py-3 text-sm">
+            ✏️ 輸入其他房間代碼
+          </button>
+        </div>
+
+        <!-- 正常加入表單 -->
+        <form v-else @submit.prevent="joinRoom" class="space-y-6">
           <!-- 房間代碼 -->
           <div>
             <label class="block text-white/90 font-medium mb-2">
@@ -154,6 +171,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useSocketStore } from '@/stores/socket'
 import { useGameStore } from '@/stores/game'
 import { useUIStore } from '@/stores/ui'
+import { apiService } from '@/services/api'
 import { logInfo, logError, captureError } from '@/utils/logger'
 import { Html5Qrcode } from 'html5-qrcode'
 
@@ -167,6 +185,11 @@ const uiStore = useUIStore()
 const props = defineProps<{
   roomId?: string
 }>()
+
+// 響應式數據
+const isCheckingRoom = ref(false)
+const roomExpired = ref(false)
+const roomExpiredReason = ref('')
 
 // 表單數據
 const form = ref({
@@ -366,16 +389,39 @@ const unwatchRoom = gameStore.$subscribe((_mutation, state) => {
   }
 })
 
+const checkRoomStatus = async (targetRoomId: string) => {
+  if (!targetRoomId || targetRoomId.length !== 6) return
+  isCheckingRoom.value = true
+  roomExpired.value = false
+
+  try {
+    logInfo('VIEW_JOIN_ROOM', '開頁即時檢查房間狀態', { targetRoomId })
+    const room = await apiService.getRoom(targetRoomId)
+    if (!room) {
+      roomExpired.value = true
+      roomExpiredReason.value = '此房間不存在或已過期關閉'
+    } else if (room.status !== 'waiting') {
+      roomExpired.value = true
+      roomExpiredReason.value = room.status === 'finished' ? '該房間遊戲已經結束' : '該房間遊戲已經開始'
+    }
+  } catch (error) {
+    roomExpired.value = true
+    roomExpiredReason.value = '此房間不存在、已關閉或無效'
+  } finally {
+    isCheckingRoom.value = false
+  }
+}
+
 // 生命週期
 onMounted(() => {
   logInfo('VIEW_JOIN_ROOM', '頁面載入', {
     prefilledRoomId: props.roomId || route.params.roomId
   })
-  // 如果 URL 中有房間 ID，自動填入
-  if (props.roomId) {
-    form.value.roomId = props.roomId.toUpperCase()
-  } else if (route.params.roomId) {
-    form.value.roomId = (route.params.roomId as string).toUpperCase()
+  // 如果 URL 中有房間 ID，自動填入並開頁即時檢查
+  const targetId = props.roomId || (route.params.roomId as string)
+  if (targetId) {
+    form.value.roomId = targetId.toUpperCase()
+    checkRoomStatus(form.value.roomId)
   }
 })
 

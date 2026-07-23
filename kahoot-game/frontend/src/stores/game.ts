@@ -82,6 +82,12 @@ export const useGameStore = defineStore('game', () => {
     currentQuestionIndex.value = 0
   }
 
+  const setTotalQuestions = (count: number) => {
+    if (currentRoom.value) {
+      currentRoom.value.totalQuestions = count
+    }
+  }
+
   const setCurrentQuestion = (question: Question) => {
     // 確保題目列表有足夠的長度（保留 currentQuestionIndex，不強制重設為 0）
     while (questions.value.length <= currentQuestionIndex.value) {
@@ -244,6 +250,7 @@ export const useGameStore = defineStore('game', () => {
     addPlayer,
     removePlayer,
     setQuestions,
+    setTotalQuestions,
     setCurrentQuestion,
     setCurrentQuestionIndex,
     nextQuestion,

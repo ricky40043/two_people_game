@@ -42,29 +42,7 @@
             </div>
           </div>
 
-          <!-- 題目數量 -->
-          <div>
-            <label class="block text-white/90 font-medium mb-2">
-              題目數量
-            </label>
-            <div class="grid grid-cols-4 gap-2">
-              <button
-                v-for="count in questionCounts"
-                :key="count"
-                type="button"
-                @click="form.totalQuestions = count"
-                :class="[
-                  'py-2 px-3 rounded-lg border-2 transition-all text-sm font-medium',
-                  form.totalQuestions === count
-                    ? 'border-white bg-white text-gray-800'
-                    : 'border-white/30 text-white hover:border-white/60'
-                ]"
-                :disabled="isSubmitting"
-              >
-                {{ count }}
-              </button>
-            </div>
-          </div>
+
 
           <!-- 答題時間 -->
           <div>
@@ -180,7 +158,6 @@ const form = ref({
 const isSubmitting = ref(false)
 
 // 選項數據
-const questionCounts = [5, 10, 15, 20]
 const answerTimes = [
   { label: '15秒', value: 15 },
   { label: '30秒', value: 30 },

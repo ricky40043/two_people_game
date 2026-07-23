@@ -212,6 +212,9 @@ export const useSocketStore = defineStore('socket', () => {
       case 'ROOM_CLOSED':
         handleRoomClosed(message.data)
         break
+      case 'ROOM_SETTINGS_UPDATED':
+        handleRoomSettingsUpdated(message.data)
+        break
       case 'ROOM_STATUS':
         handleRoomStatus(message.data)
         break
@@ -245,23 +248,32 @@ export const useSocketStore = defineStore('socket', () => {
     }
 
     if (!data.exists) {
-      // 房間不存在 → 清除 session
-      logInfo('ROOM', '房間不存在，清除 session')
+      // 房間不存在 → 清除 session 並跳回首頁
+      logInfo('ROOM', '房間不存在，自動踢回首頁')
       localStorage.removeItem('ricky_game_session')
+      gameStore.resetGame()
+      uiStore.showWarning('房間不存在或已過期關閉')
+      window.location.href = '/'
       return
     }
 
     if (data.status === 'finished' || data.status === 'abandoned') {
-      // 房間已結束 → 清除 session
-      logInfo('ROOM', '房間已結束，清除 session')
+      // 房間已結束 → 清除 session 並跳回首頁
+      logInfo('ROOM', '房間已結束，自動踢回首頁')
       localStorage.removeItem('ricky_game_session')
+      gameStore.resetGame()
+      uiStore.showInfo('房間遊戲已結束')
+      window.location.href = '/'
       return
     }
 
     if (!data.playerExists) {
-      // 玩家不在房間裡了 → 清除 session
-      logInfo('ROOM', '玩家不在房間中，清除 session')
+      // 玩家不在房間裡了 → 清除 session 並跳回首頁
+      logInfo('ROOM', '玩家不在房間中，自動踢回首頁')
       localStorage.removeItem('ricky_game_session')
+      gameStore.resetGame()
+      uiStore.showWarning('您已不在該房間中')
+      window.location.href = '/'
       return
     }
 
@@ -1231,6 +1243,25 @@ export const useSocketStore = defineStore('socket', () => {
     }
   }
 
+  const handleRoomSettingsUpdated = (data: any) => {
+    logInfo('ROOM', '收到房間設定更新', data)
+    if (data.totalQuestions) {
+      gameStore.setTotalQuestions(data.totalQuestions)
+      uiStore.showInfo(`題目數量已更新為 ${data.totalQuestions} 題`)
+    }
+  }
+
+  const updateRoomSettings = (roomId: string, settings: { totalQuestions: number }) => {
+    logInfo('ROOM', '發送更新房間設定', { roomId, settings })
+    sendMessage({
+      type: 'UPDATE_ROOM_SETTINGS',
+      data: {
+        roomId,
+        totalQuestions: settings.totalQuestions
+      }
+    })
+  }
+
   // 斷開連線
   const disconnect = () => {
     shouldReconnect.value = false
@@ -1253,6 +1284,7 @@ export const useSocketStore = defineStore('socket', () => {
     connect,
     disconnect,
     sendMessage,
+    updateRoomSettings,
     createRoom,
     joinRoom,
     startGame,

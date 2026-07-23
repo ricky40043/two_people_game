@@ -94,23 +94,79 @@
 
             <!-- 遊戲設定 -->
             <div class="card card-body">
-              <h3 class="text-lg font-bold text-white mb-3">⚙️ 遊戲設定</h3>
-              <div class="space-y-3 text-sm">
-                <div class="flex justify-between text-white/80">
+              <h3 class="text-lg font-bold text-white mb-3 flex items-center justify-between">
+                <span>⚙️ 遊戲設定</span>
+                <span v-if="gameStore.isHost" class="text-xs text-yellow-300 font-normal">可直接修改設定</span>
+              </h3>
+              <div class="space-y-4 text-sm">
+                <div class="flex justify-between items-center text-white/80">
                   <span>主持人：</span>
-                  <span class="font-medium">{{ gameStore.currentRoom?.hostName }}</span>
+                  <span class="font-bold text-white">{{ gameStore.currentRoom?.hostName }}</span>
                 </div>
-                <div class="flex justify-between text-white/80">
-                  <span>題目數量：</span>
-                  <span class="font-medium">{{ gameStore.currentRoom?.totalQuestions }} 題</span>
+                
+                <!-- 題目數量選擇 (房主可調整，玩家同步顯示) -->
+                <div>
+                  <div class="flex justify-between items-center text-white/80 mb-2">
+                    <span>題目數量：</span>
+                    <span class="font-extrabold text-yellow-300 text-base">{{ gameStore.currentRoom?.totalQuestions }} 題</span>
+                  </div>
+
+                  <!-- 房主可見設定選單 -->
+                  <div v-if="gameStore.isHost" class="space-y-2">
+                    <div class="grid grid-cols-5 gap-1.5">
+                      <button
+                        v-for="count in [5, 10, 15, 20]"
+                        :key="count"
+                        type="button"
+                        @click="setPresetQuestions(count)"
+                        :class="[
+                          'py-1.5 px-1 rounded-lg border transition-all text-xs font-bold text-center',
+                          !isCustomQuestions && gameStore.currentRoom?.totalQuestions === count
+                            ? 'border-yellow-400 bg-yellow-400 text-black shadow-md'
+                            : 'border-white/20 bg-white/10 text-white hover:bg-white/20'
+                        ]"
+                      >
+                        {{ count }}題
+                      </button>
+
+                      <button
+                        type="button"
+                        @click="selectCustomQuestions"
+                        :class="[
+                          'py-1.5 px-1 rounded-lg border transition-all text-xs font-bold text-center',
+                          isCustomQuestions
+                            ? 'border-yellow-400 bg-yellow-400 text-black shadow-md'
+                            : 'border-white/20 bg-white/10 text-white hover:bg-white/20'
+                        ]"
+                      >
+                        自訂
+                      </button>
+                    </div>
+
+                    <!-- 自訂輸入框 (1 ~ 50 題) -->
+                    <div v-if="isCustomQuestions" class="flex items-center space-x-2 bg-white/10 p-2 rounded-xl border border-yellow-400/50 mt-2">
+                      <span class="text-xs text-white/80 whitespace-nowrap">數量 (1-50):</span>
+                      <input
+                        v-model.number="customQuestionsInput"
+                        type="number"
+                        min="1"
+                        max="50"
+                        @input="onCustomInput"
+                        class="w-full bg-black/40 text-yellow-300 font-bold text-center border border-white/20 rounded-lg py-1 px-2 text-sm focus:outline-none focus:border-yellow-400"
+                        placeholder="1-50"
+                      />
+                      <span class="text-xs text-white/80">題</span>
+                    </div>
+                  </div>
                 </div>
-                <div class="flex justify-between text-white/80">
+
+                <div class="flex justify-between items-center text-white/80">
                   <span>答題時間：</span>
-                  <span class="font-medium">{{ gameStore.currentRoom?.questionTimeLimit }} 秒</span>
+                  <span class="font-medium text-white">{{ gameStore.currentRoom?.questionTimeLimit }} 秒/題</span>
                 </div>
-                <div class="flex justify-between text-white/80">
+                <div class="flex justify-between items-center text-white/80">
                   <span>預計時長：</span>
-                  <span class="font-medium">{{ estimatedDuration }} 分鐘</span>
+                  <span class="font-medium text-white">{{ estimatedDuration }} 分鐘</span>
                 </div>
               </div>
             </div>
@@ -266,7 +322,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useGameStore } from '@/stores/game'
 import { useSocketStore } from '@/stores/socket'
@@ -289,6 +345,33 @@ const props = defineProps<{
 }>()
 
 // 響應式數據
+const isCustomQuestions = ref(false)
+const customQuestionsInput = ref(10)
+
+const setPresetQuestions = (count: number) => {
+  isCustomQuestions.value = false
+  updateQuestionsCount(count)
+}
+
+const selectCustomQuestions = () => {
+  isCustomQuestions.value = true
+  const count = Math.min(Math.max(customQuestionsInput.value || 10, 1), 50)
+  updateQuestionsCount(count)
+}
+
+const onCustomInput = () => {
+  let val = Number(customQuestionsInput.value)
+  if (isNaN(val)) val = 10
+  if (val > 50) val = 50
+  if (val < 1) val = 1
+  customQuestionsInput.value = val
+  updateQuestionsCount(val)
+}
+
+const updateQuestionsCount = (count: number) => {
+  if (!gameStore.isHost || !roomId.value) return
+  socketStore.updateRoomSettings(roomId.value, { totalQuestions: count })
+}
 
 // 計算屬性
 const roomId = computed(() => props.roomId || route.params.roomId as string)
