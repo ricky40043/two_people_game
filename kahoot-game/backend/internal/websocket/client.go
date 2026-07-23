@@ -191,6 +191,8 @@ func (c *Client) handleMessage(msg *Message) {
 		c.handleLeaveRoom(msg.Data)
 	case "UPDATE_ROOM_SETTINGS":
 		c.handleUpdateRoomSettings(msg.Data)
+	case "RESET_ROOM_TO_LOBBY":
+		c.handleResetRoomToLobby(msg.Data)
 	case "PING":
 		c.handlePing()
 	default:
@@ -1521,6 +1523,59 @@ func (c *Client) handleUpdateRoomSettings(data interface{}) {
 	}
 
 	if msgBytes, err := json.Marshal(updateMsg); err == nil {
+		c.hub.BroadcastToRoom(roomID, msgBytes)
+	}
+}
+
+// handleResetRoomToLobby 處理重置房間回到大廳（再來一局）
+func (c *Client) handleResetRoomToLobby(data interface{}) {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		c.sendError("INVALID_DATA", "重置房間資料格式錯誤")
+		return
+	}
+
+	roomID, _ := dataMap["roomId"].(string)
+	if roomID == "" {
+		roomID = c.RoomID
+	}
+
+	if roomID == "" {
+		c.sendError("INVALID_DATA", "房間ID不能為空")
+		return
+	}
+
+	room, err := c.hub.roomService.GetRoom(roomID)
+	if err != nil {
+		c.sendError("ROOM_NOT_FOUND", "房間不存在")
+		return
+	}
+
+	// 檢查權限：只允許主持人重置房間
+	if !c.IsHost && room.HostID != c.ID {
+		c.sendError("PERMISSION_DENIED", "只有主持人可以重置房間回到大廳")
+		return
+	}
+
+	c.hub.gameService.ResetRoomToLobby(room)
+	if err := c.hub.roomService.UpdateRoom(room); err != nil {
+		c.sendError("UPDATE_FAILED", "更新房間資料失敗")
+		return
+	}
+
+	log.Printf("🔄 [再來一局] 房主 %s 重置房間 %s，向全員廣播 ROOM_RESET_TO_LOBBY", c.PlayerName, roomID)
+
+	resetMsg := Message{
+		Type: "ROOM_RESET_TO_LOBBY",
+		Data: map[string]interface{}{
+			"roomId":  roomID,
+			"players": room.GetPlayerList(),
+			"scores":  room.GetSortedPlayersByScore(),
+			"status":  room.Status,
+		},
+	}
+
+	if msgBytes, err := json.Marshal(resetMsg); err == nil {
 		c.hub.BroadcastToRoom(roomID, msgBytes)
 	}
 }

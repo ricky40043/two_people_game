@@ -292,20 +292,15 @@ const shareResults = async () => {
 }
 
 const playAgain = () => {
-  if (window.debugLogger) {
-    window.debugLogger.info('CLEANUP', '用戶點擊"再來一局"，開始清理遊戲資源')
+  logInfo('VIEW_RESULTS', '用戶選擇再來一局 (回到大廳)', { roomId: roomId.value })
+  
+  if (gameStore.isHost) {
+    uiStore.showInfo('正在重置房間，帶領大家回到大廳...')
+    socketStore.resetRoomToLobby(roomId.value)
+  } else {
+    uiStore.showInfo('回到大廳等待房主開始下一局...')
+    router.push(`/lobby/${roomId.value}`)
   }
-  
-  logInfo('VIEW_RESULTS', '用戶選擇再來一局', { roomId: roomId.value })
-  uiStore.showInfo('正在清理遊戲資源...')
-  
-  // 清理遊戲資源
-  socketStore.cleanupAfterGame()
-  
-  // 短暫延遲後跳轉，確保清理完成
-  setTimeout(() => {
-    router.push('/create')
-  }, 500)
 }
 
 const returnHome = () => {

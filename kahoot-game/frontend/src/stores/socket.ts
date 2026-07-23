@@ -215,6 +215,9 @@ export const useSocketStore = defineStore('socket', () => {
       case 'ROOM_SETTINGS_UPDATED':
         handleRoomSettingsUpdated(message.data)
         break
+      case 'ROOM_RESET_TO_LOBBY':
+        handleRoomResetToLobby(message.data)
+        break
       case 'ROOM_STATUS':
         handleRoomStatus(message.data)
         break
@@ -1251,6 +1254,26 @@ export const useSocketStore = defineStore('socket', () => {
     }
   }
 
+  const handleRoomResetToLobby = (data: any) => {
+    logInfo('ROOM', '收到房間重置回到大廳事件', data)
+    gameStore.setGameState('waiting')
+    gameStore.updateScores(data.scores || [])
+    uiStore.showSuccess('房主重新開啟了房間！準備下一局...')
+
+    const currentRoomId = gameStore.currentRoom?.id || data.roomId
+    if (currentRoomId) {
+      window.location.href = `/lobby/${currentRoomId}`
+    }
+  }
+
+  const resetRoomToLobby = (roomId: string) => {
+    logInfo('ROOM', '發送重置房間回到大廳請求', { roomId })
+    sendMessage({
+      type: 'RESET_ROOM_TO_LOBBY',
+      data: { roomId }
+    })
+  }
+
   const updateRoomSettings = (roomId: string, settings: { totalQuestions: number }) => {
     logInfo('ROOM', '發送更新房間設定', { roomId, settings })
     sendMessage({
@@ -1285,6 +1308,7 @@ export const useSocketStore = defineStore('socket', () => {
     disconnect,
     sendMessage,
     updateRoomSettings,
+    resetRoomToLobby,
     createRoom,
     joinRoom,
     startGame,

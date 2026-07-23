@@ -126,6 +126,26 @@ func (s *GameService) GetGameStats(gameID int) (*models.GameStatistics, error) {
 	return &stats, nil
 }
 
+// ResetRoomToLobby 重置房間回到大廳狀態（再來一局）
+func (s *GameService) ResetRoomToLobby(room *models.Room) {
+	room.Status = models.RoomStatusWaiting
+	room.CurrentQuestion = 0
+	room.CurrentHost = ""
+	room.NextHostOverride = ""
+	room.Answers = make(map[string]*models.Answer)
+	room.GameHistory = make([]models.QuestionHistory, 0)
+	room.Questions = make([]models.Question, 0)
+
+	// 重置所有玩家的分數與統計
+	for _, player := range room.Players {
+		player.Score = 0
+		player.CorrectAnswers = 0
+		player.TimesAsHost = 0
+	}
+
+	log.Printf("🔄 [房間重置] 房間 %s 已重置回到大廳狀態 (人數: %d)", room.ID, len(room.Players))
+}
+
 // StartTwoTypesGame 開始「2種人」遊戲
 func (s *GameService) StartTwoTypesGame(room *models.Room) error {
 	if len(room.Players) < 2 {
