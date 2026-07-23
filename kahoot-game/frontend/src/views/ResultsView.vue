@@ -200,6 +200,7 @@ import { useSocketStore } from '@/stores/socket'
 import { useUIStore } from '@/stores/ui'
 import PlayerAvatar from '@/components/PlayerAvatar.vue'
 import { logInfo, logWarn, logError } from '@/utils/logger'
+import { fireHostConfetti, firePlayerConfetti } from '@/utils/confetti'
 
 const route = useRoute()
 const router = useRouter()
@@ -338,6 +339,20 @@ onMounted(() => {
       rankingCount: finalRanking.value.length
     })
   }
+
+  // 觸發彩花慶祝特效 (全螢幕 / 個人前三名)
+  setTimeout(() => {
+    if (gameStore.isHost) {
+      logInfo('VIEW_RESULTS', '房主大螢幕觸發盛大慶祝彩花')
+      fireHostConfetti()
+    } else {
+      const rank = myStats.value?.rank || 0
+      logInfo('VIEW_RESULTS', `玩家視角 (名次: #${rank}) 觸發專屬彩花`)
+      if (rank >= 1 && rank <= 3) {
+        firePlayerConfetti(rank)
+      }
+    }
+  }, 300)
 })
 </script>
 

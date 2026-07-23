@@ -179,9 +179,35 @@
     <div v-else-if="gameStore.gameState === 'show_result'" class="h-screen flex flex-col justify-center p-4">
       <div class="max-w-md mx-auto w-full text-center">
         <div class="bg-slate-900/90 text-white rounded-3xl p-6 md:p-8 shadow-2xl backdrop-blur-xl border border-white/20 fade-in">
-          <h2 class="text-xl font-bold text-white/80 mb-4">
+          <h2 class="text-xl font-bold text-white/80 mb-3">
             第 {{ currentQuestionNumber }} 題本題結算
           </h2>
+
+          <!-- 個人本題正誤狀態標章 Banner -->
+          <div 
+            class="rounded-2xl p-4 mb-5 border text-center shadow-lg transition-all transform animate-pulse"
+            :class="{
+              'bg-gradient-to-r from-amber-500 to-yellow-500 text-black border-yellow-300': isMyTurn,
+              'bg-gradient-to-r from-emerald-500 to-green-600 text-white border-green-300': !isMyTurn && scoreGained > 0,
+              'bg-gradient-to-r from-rose-600 to-red-700 text-white border-red-400': !isMyTurn && scoreGained === 0
+            }"
+          >
+            <div v-if="isMyTurn" class="flex flex-col items-center">
+              <span class="text-3xl mb-1">👑</span>
+              <span class="text-xl font-black tracking-wide">您是本題主角！</span>
+              <span class="text-xs font-semibold opacity-90">獲得主角基礎分 +50 分</span>
+            </div>
+            <div v-else-if="scoreGained > 0" class="flex flex-col items-center">
+              <span class="text-3xl mb-1">🎉</span>
+              <span class="text-xl font-black tracking-wide">恭喜猜對主角選擇！</span>
+              <span class="text-xs font-semibold text-green-100">本題獲得 +{{ scoreGained }} 分速度得分</span>
+            </div>
+            <div v-else class="flex flex-col items-center">
+              <span class="text-3xl mb-1">❌</span>
+              <span class="text-xl font-black tracking-wide">答錯囉！與主角心思不符</span>
+              <span class="text-xs font-semibold text-red-100">本題獲得 0 分，下一題加油！</span>
+            </div>
+          </div>
           
           <!-- 個人成績與名次核心亮點卡 -->
           <div class="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 rounded-2xl p-6 mb-6 shadow-lg border border-white/20 transform transition-all duration-300 hover:scale-[1.02]">

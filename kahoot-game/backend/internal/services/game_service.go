@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"math"
 	"sort"
 	"time"
 
@@ -285,20 +286,21 @@ func (s *GameService) CalculateTwoTypesScores(room *models.Room, answers map[str
 				scoreGained = 50
 				log.Printf("   ├─ 主角基礎分: %d", scoreGained)
 			} else if answer.Answer == hostAnswer {
-				// 其他玩家：猜對主角答案得分，越快越高分
-				baseScore := 100
-
-				// 計算速度獎勵：最多 50 分
-				timeBonus := int((float64(room.QuestionTimeLimit) - answer.ResponseTime) * 1.5)
-				if timeBonus < 0 {
-					timeBonus = 0
-				}
-				if timeBonus > 50 {
-					timeBonus = 50 // 限制速度獎勵最高 50 分
+				// 其他玩家：猜對主角答案得分，使用指數曲線衰減拉大時間急距
+				// 0秒極速答對可拿 150 分，前幾秒顯著急降，15~30秒平緩微降至 50 分保底
+				responseTime := answer.ResponseTime
+				if responseTime < 0 {
+					responseTime = 0
 				}
 
-				scoreGained = baseScore + timeBonus
-				log.Printf("   ├─ 猜對主角! 基礎分: %d, 速度獎勵: %d, 總得分: %d", baseScore, timeBonus, scoreGained)
+				minScore := 50.0  // 保底得分
+				maxBonus := 100.0 // 速度最高加成
+				decayRate := 0.18 // 衰減速率
+
+				calculatedScore := minScore + maxBonus*math.Exp(-decayRate*responseTime)
+				scoreGained = int(math.Round(calculatedScore))
+
+				log.Printf("   ├─ 猜對主角! 響應時間: %.2f秒, 曲線分數: %d (對數曲線: 150 -> 50)", responseTime, scoreGained)
 			} else {
 				log.Printf("   ├─ 猜錯主角 (答案: %s, 主角答案: %s), 得分: 0", answer.Answer, hostAnswer)
 			}

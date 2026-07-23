@@ -184,6 +184,43 @@
             />
           </div>
 
+          <!-- 各玩家答題選擇明細 (誰選了什麼) -->
+          <div class="my-6 bg-black/40 rounded-2xl p-4 border border-white/10 text-left">
+            <h4 class="text-lg font-bold text-yellow-300 mb-3 flex items-center justify-between">
+              <span class="flex items-center"><span class="mr-2">🗣️</span> 全體玩家選擇明細</span>
+              <span class="text-xs text-white/60 font-normal">綠色：猜對 | 紅色：猜錯 | 黃色：主角</span>
+            </h4>
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 max-h-52 overflow-y-auto pr-1">
+              <div 
+                v-for="pDetail in allPlayersAnswerDetails" 
+                :key="pDetail.id"
+                class="flex items-center justify-between bg-white/10 p-3 rounded-xl border transition-all"
+                :class="{
+                  'border-yellow-400/80 bg-yellow-400/20': pDetail.isHost,
+                  'border-green-400/80 bg-green-500/20': !pDetail.isHost && pDetail.isCorrect,
+                  'border-red-400/50 bg-red-500/10': !pDetail.isHost && pDetail.hasAnswered && !pDetail.isCorrect,
+                  'opacity-40 border-gray-600': !pDetail.hasAnswered
+                }"
+              >
+                <div class="flex items-center space-x-2 overflow-hidden mr-2">
+                  <span v-if="pDetail.isHost" class="text-base" title="主角">👑</span>
+                  <span v-else-if="pDetail.isCorrect" class="text-base font-bold text-green-400" title="猜對">✓</span>
+                  <span v-else-if="pDetail.hasAnswered" class="text-base font-bold text-red-400" title="猜錯">✗</span>
+                  <span v-else class="text-base opacity-40">⏳</span>
+                  <span class="font-semibold text-white truncate max-w-[90px] text-sm">{{ pDetail.name }}</span>
+                </div>
+                <div class="text-right flex-shrink-0">
+                  <span v-if="pDetail.hasAnswered" class="font-bold px-2 py-1 rounded text-xs inline-block"
+                    :class="pDetail.answer === 'A' ? 'bg-red-500/90 text-white' : 'bg-blue-500/90 text-white'"
+                  >
+                    {{ pDetail.answer }}: {{ pDetail.answerText }}
+                  </span>
+                  <span v-else class="text-xs text-white/50">未作答</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- 猜測統計與繼續按鈕 -->
           <div class="flex flex-col md:flex-row items-center justify-between bg-black/30 rounded-2xl p-4 mt-6">
             <div class="flex items-center space-x-6 mb-4 md:mb-0">
@@ -269,7 +306,7 @@ const roomId = computed(() => props.roomId || route.params.roomId as string)
 
 const currentQuestionNumber = computed(() => gameStore.currentQuestionIndex + 1)
 
-const currentHostPlayer = computed(() => gameLogic.currentHostPlayer.value)
+const currentHostPlayer = computed(() => gameStore.getCurrentHostPlayer)
 
 const questionOptions = computed(() => {
   const question = gameStore.currentQuestion
@@ -333,6 +370,39 @@ const hostAnswerInfo = computed(() => {
     text: answerText || '',
     playerName: hostPlayer.name
   }
+})
+
+// 全體玩家選擇明細 (供房主白板大螢幕觀看誰選了什麼)
+const allPlayersAnswerDetails = computed(() => {
+  const room = gameStore.currentRoom
+  if (!room || !room.players) return []
+
+  const currentHostId = gameStore.currentHost
+  const hostAnswer = playerAnswersFromStore.value[currentHostId || '']
+  const question = gameStore.currentQuestion
+
+  return Object.values(room.players)
+    .filter(p => !p.isHost) // 排除房間管理者
+    .map(p => {
+      const isHost = p.id === currentHostId
+      const answer = playerAnswersFromStore.value[p.id] || p.currentAnswer || ''
+      const hasAnswered = !!answer
+      const isCorrect = isHost ? true : (hasAnswered && answer === hostAnswer)
+      
+      let answerText = ''
+      if (answer === 'A') answerText = question?.optionA || 'A'
+      else if (answer === 'B') answerText = question?.optionB || 'B'
+
+      return {
+        id: p.id,
+        name: p.name,
+        isHost,
+        hasAnswered,
+        answer,
+        answerText,
+        isCorrect
+      }
+    })
 })
 
 // 猜對人數 (排除主角，只計算猜測者)

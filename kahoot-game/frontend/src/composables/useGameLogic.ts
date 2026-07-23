@@ -22,6 +22,9 @@ export function useGameLogic() {
   const playerList = computed(() => Object.values(gameStore.currentRoom?.players || {}))
 
   const currentHostPlayer = computed(() => {
+    if (gameStore.currentHost) {
+      return gameStore.getPlayerById(gameStore.currentHost)
+    }
     const players = playerList.value.filter(p => !p.isHost) // 排除房間主持人
     if (players.length === 0) return null
     return players[currentHostIndex.value % players.length]
