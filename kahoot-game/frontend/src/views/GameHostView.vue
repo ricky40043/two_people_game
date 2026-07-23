@@ -164,19 +164,44 @@
 
     <!-- 題目結果顯示 (白板大螢幕) -->
     <div v-else-if="gameStore.gameState === 'show_result'" class="min-h-screen flex flex-col justify-center p-6 md:p-10 overflow-y-auto">
-      <div class="max-w-5xl mx-auto w-full text-center">
+      <div class="max-w-4xl mx-auto w-full text-center">
         <div class="question-card fade-in bg-slate-900/90 text-white backdrop-blur-xl border border-white/20 shadow-2xl p-6 md:p-8 rounded-3xl">
           <div class="flex items-center justify-between border-b border-white/10 pb-4 mb-6">
-            <span class="text-white/70 font-bold text-lg">第 {{ currentQuestionNumber }} 題結果結算</span>
-            <span v-if="hostAnswerInfo.show" class="bg-blue-500/30 text-blue-300 border border-blue-400/30 font-bold px-4 py-1 rounded-full text-sm">
-              👑 主角 {{ hostAnswerInfo.playerName }} 選擇：選項 {{ hostAnswerInfo.answer }} ({{ hostAnswerInfo.text }})
+            <span class="text-white/70 font-bold text-lg">第 {{ currentQuestionNumber }} / {{ gameStore.currentRoom?.totalQuestions }} 題結算</span>
+            <span class="bg-purple-500/30 text-purple-300 border border-purple-400/30 font-bold px-4 py-1 rounded-full text-sm">
+              單題公佈
             </span>
           </div>
 
+          <!-- 👑 主角答案 & 🎯 幾人答對 公布卡片 -->
+          <div v-if="hostAnswerInfo.show" class="bg-gradient-to-r from-purple-900/80 via-indigo-900/80 to-blue-900/80 border-2 border-yellow-400/80 rounded-3xl p-6 mb-8 shadow-2xl text-left">
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <!-- 左側：主角選擇 -->
+              <div>
+                <div class="inline-flex items-center space-x-2 bg-yellow-400 text-slate-900 text-sm font-black px-3.5 py-1 rounded-full mb-2">
+                  <span>👑 主角</span>
+                  <span class="text-base">{{ hostAnswerInfo.playerName }}</span>
+                  <span>的選擇</span>
+                </div>
+                <h2 class="text-2xl sm:text-3xl font-black text-white flex items-center space-x-3 mt-1">
+                  <span class="text-yellow-300 font-mono text-3xl sm:text-4xl">[{{ hostAnswerInfo.answer }}]</span>
+                  <span>{{ hostAnswerInfo.text }}</span>
+                </h2>
+              </div>
+
+              <!-- 右側：幾人答對 -->
+              <div class="bg-black/50 border border-green-400/50 rounded-2xl px-6 py-4 text-center w-full sm:w-auto min-w-[150px] shadow-inner">
+                <span class="text-green-300 text-xs font-bold block mb-1">🎯 猜對人數</span>
+                <span class="text-3xl sm:text-4xl font-black text-green-400">{{ correctGuesses }} 人</span>
+                <span class="text-white/50 text-xs block mt-1">(猜錯 {{ wrongGuesses }} 人)</span>
+              </div>
+            </div>
+          </div>
+
           <!-- 白板主要橫向長條圖與動態排行榜 -->
-          <div class="my-4">
-            <h3 class="text-2xl font-black text-yellow-300 text-left mb-2 flex items-center">
-              <span>🏆 白板最新戰況 (前三名)</span>
+          <div class="my-6 text-left">
+            <h3 class="text-xl font-black text-yellow-300 mb-3 flex items-center">
+              <span>🏆 最新戰況排行榜 (前三名)</span>
             </h3>
             <LeaderboardBarChart 
               :scores="gameStore.sortedScores" 
@@ -184,61 +209,13 @@
             />
           </div>
 
-          <!-- 各玩家答題選擇明細 (誰選了什麼) -->
-          <div class="my-6 bg-black/40 rounded-2xl p-4 border border-white/10 text-left">
-            <h4 class="text-lg font-bold text-yellow-300 mb-3 flex items-center justify-between">
-              <span class="flex items-center"><span class="mr-2">🗣️</span> 全體玩家選擇明細</span>
-              <span class="text-xs text-white/60 font-normal">綠色：猜對 | 紅色：猜錯 | 黃色：主角</span>
-            </h4>
-            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 max-h-52 overflow-y-auto pr-1">
-              <div 
-                v-for="pDetail in allPlayersAnswerDetails" 
-                :key="pDetail.id"
-                class="flex items-center justify-between bg-white/10 p-3 rounded-xl border transition-all"
-                :class="{
-                  'border-yellow-400/80 bg-yellow-400/20': pDetail.isHost,
-                  'border-green-400/80 bg-green-500/20': !pDetail.isHost && pDetail.isCorrect,
-                  'border-red-400/50 bg-red-500/10': !pDetail.isHost && pDetail.hasAnswered && !pDetail.isCorrect,
-                  'opacity-40 border-gray-600': !pDetail.hasAnswered
-                }"
-              >
-                <div class="flex items-center space-x-2 overflow-hidden mr-2">
-                  <span v-if="pDetail.isHost" class="text-base" title="主角">👑</span>
-                  <span v-else-if="pDetail.isCorrect" class="text-base font-bold text-green-400" title="猜對">✓</span>
-                  <span v-else-if="pDetail.hasAnswered" class="text-base font-bold text-red-400" title="猜錯">✗</span>
-                  <span v-else class="text-base opacity-40">⏳</span>
-                  <span class="font-semibold text-white truncate max-w-[90px] text-sm">{{ pDetail.name }}</span>
-                </div>
-                <div class="text-right flex-shrink-0">
-                  <span v-if="pDetail.hasAnswered" class="font-bold px-2 py-1 rounded text-xs inline-block"
-                    :class="pDetail.answer === 'A' ? 'bg-red-500/90 text-white' : 'bg-blue-500/90 text-white'"
-                  >
-                    {{ pDetail.answer }}: {{ pDetail.answerText }}
-                  </span>
-                  <span v-else class="text-xs text-white/50">未作答</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 猜測統計與繼續按鈕 -->
-          <div class="flex flex-col md:flex-row items-center justify-between bg-black/30 rounded-2xl p-4 mt-6">
-            <div class="flex items-center space-x-6 mb-4 md:mb-0">
-              <div class="text-left">
-                <span class="text-gray-400 text-xs block">猜對人數</span>
-                <span class="text-2xl font-black text-green-400">{{ correctGuesses }} 人</span>
-              </div>
-              <div class="text-left">
-                <span class="text-gray-400 text-xs block">猜錯人數</span>
-                <span class="text-2xl font-black text-red-400">{{ wrongGuesses }} 人</span>
-              </div>
-            </div>
-
+          <!-- 進入下一題按鈕 -->
+          <div class="flex justify-end bg-black/30 rounded-2xl p-4 mt-6">
             <button
               @click="continueGame"
-              class="btn btn-primary text-lg md:text-xl py-3 px-8 rounded-xl shadow-lg hover:scale-105 transition-all"
+              class="btn btn-primary text-lg sm:text-xl py-3.5 px-8 rounded-2xl shadow-xl hover:scale-105 transition-all w-full sm:w-auto font-black"
             >
-              <span v-if="isLastQuestion">🏆 查看最終總結果</span>
+              <span v-if="isLastQuestion">🏆 查看最終排行榜</span>
               <span v-else>▶️ 進入下一題</span>
             </button>
           </div>
@@ -370,39 +347,6 @@ const hostAnswerInfo = computed(() => {
     text: answerText || '',
     playerName: hostPlayer.name
   }
-})
-
-// 全體玩家選擇明細 (供房主白板大螢幕觀看誰選了什麼)
-const allPlayersAnswerDetails = computed(() => {
-  const room = gameStore.currentRoom
-  if (!room || !room.players) return []
-
-  const currentHostId = gameStore.currentHost
-  const hostAnswer = playerAnswersFromStore.value[currentHostId || '']
-  const question = gameStore.currentQuestion
-
-  return Object.values(room.players)
-    .filter(p => !p.isHost) // 排除房間管理者
-    .map(p => {
-      const isHost = p.id === currentHostId
-      const answer = playerAnswersFromStore.value[p.id] || p.currentAnswer || ''
-      const hasAnswered = !!answer
-      const isCorrect = isHost ? true : (hasAnswered && answer === hostAnswer)
-      
-      let answerText = ''
-      if (answer === 'A') answerText = question?.optionA || 'A'
-      else if (answer === 'B') answerText = question?.optionB || 'B'
-
-      return {
-        id: p.id,
-        name: p.name,
-        isHost,
-        hasAnswered,
-        answer,
-        answerText,
-        isCorrect
-      }
-    })
 })
 
 // 猜對人數 (排除主角，只計算猜測者)
