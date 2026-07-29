@@ -80,6 +80,28 @@
       </div>
     </div>
 
+    <!-- 斷線提示彈窗（重連失敗 / 房間關閉，點擊確認才回首頁） -->
+    <div
+      v-if="socketStore.showDisconnectDialog"
+      class="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
+    >
+      <div class="bg-white rounded-2xl p-6 max-w-sm w-full text-center shadow-2xl">
+        <div class="text-5xl mb-3">🔌</div>
+        <h3 class="text-xl font-bold text-gray-800 mb-2">
+          {{ socketStore.disconnectDialogTitle }}
+        </h3>
+        <p class="text-gray-600 text-sm mb-6 leading-relaxed">
+          {{ socketStore.disconnectDialogMessage }}
+        </p>
+        <button
+          @click="socketStore.acknowledgeDisconnect()"
+          class="w-full btn btn-primary py-3 text-lg font-bold"
+        >
+          確認
+        </button>
+      </div>
+    </div>
+
     <!-- 重連詢問彈窗 -->
     <RejoinDialog
       :visible="socketStore.showRejoinDialog"

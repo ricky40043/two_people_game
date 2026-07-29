@@ -255,9 +255,10 @@ func (r *Room) GetSortedPlayersByScore() []ScoreInfo {
 
 	for _, player := range r.Players {
 		scores = append(scores, ScoreInfo{
-			PlayerID:   player.ID,
-			PlayerName: player.Name,
-			Score:      player.Score,
+			PlayerID:       player.ID,
+			PlayerName:     player.Name,
+			Score:          player.Score,
+			CorrectAnswers: player.CorrectAnswers,
 		})
 	}
 

@@ -166,7 +166,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSocketStore } from '@/stores/socket'
 import { useGameStore } from '@/stores/game'
@@ -200,58 +200,6 @@ const form = ref({
 const isSubmitting = ref(false)
 const showQRScanner = ref(false)
 let html5QrCode: Html5Qrcode | null = null
-
-// 監聽 QR 掃描器打開/關閉
-watch(showQRScanner, async (newVal) => {
-  if (newVal) {
-    // 延遲一下讓 DOM 渲染完成
-    setTimeout(async () => {
-      try {
-        html5QrCode = new Html5Qrcode('qr-reader')
-        await html5QrCode.start(
-          { facingMode: 'environment' },
-          {
-            fps: 10,
-            qrbox: { width: 250, height: 250 }
-          },
-          (decodedText) => {
-            // 掃描成功
-            console.log('QR Code 掃描結果:', decodedText)
-            // 解析 URL 或直接提取房間 ID
-            let roomId = decodedText
-            // 如果是 URL，嘗試提取房間 ID
-            if (decodedText.includes('/join/')) {
-              const match = decodedText.match(/\/join\/([A-Z0-9]+)/i)
-              if (match) {
-                roomId = match[1]
-              }
-            }
-            // 如果是完整 URL，也嘗試從路徑提取
-            if (decodedText.includes('?')) {
-              const urlParams = new URL(decodedText)
-              // 檢查路徑是否包含 roomId
-              const pathMatch = urlParams.pathname.match(/\/join\/([A-Z0-9]+)/i)
-              if (pathMatch) {
-                roomId = pathMatch[1]
-              }
-            }
-            
-            form.value.roomId = roomId.toUpperCase()
-            closeQRScanner()
-            uiStore.showSuccess('掃描成功！已自動填入房間代碼')
-          },
-          () => {
-            // 掃描錯誤，忽略
-            void 0
-          }
-        )
-      } catch (e) {
-        console.error('啟動 QR 掃描器失敗:', e)
-        uiStore.showError('無法啟動相機，請檢查權限')
-      }
-    }, 100)
-  }
-})
 
 // 計算屬性
 const canSubmit = computed(() => {
@@ -370,10 +318,14 @@ const startQRScanner = async () => {
   }
 }
 
-const handleScanResult = (scannedText: string) => {
+// 避免同一次掃描的多個影格重複觸發
+let isHandlingScan = false
+
+const handleScanResult = async (scannedText: string) => {
+  if (isHandlingScan) return
   logInfo('VIEW_JOIN_ROOM', 'QR 碼掃描成功', { scannedText })
   let code = scannedText.trim()
-  
+
   // 嘗試解析帶有 /join/ABC123 的 URL
   const match = code.match(/\/join\/([A-Za-z0-9]{6})/i)
   if (match && match[1]) {
@@ -382,14 +334,23 @@ const handleScanResult = (scannedText: string) => {
     code = code.toUpperCase()
   }
 
-  if (code.length === 6) {
-    form.value.roomId = code
-    uiStore.showSuccess(`識別成功！房間代碼: ${code}`)
-    closeQRScanner()
-    checkRoomStatus(code)
-  } else {
+  if (code.length !== 6) {
     uiStore.showWarning('無法識別此 QR Code，請掃描主持人畫面上的房間 QR Code')
+    return
   }
+
+  isHandlingScan = true
+  form.value.roomId = code
+  await closeQRScanner()
+
+  // 掃描當下就驗證房間，不等到按「加入遊戲」才發現房間不存在
+  const available = await checkRoomStatus(code)
+  if (available) {
+    uiStore.showSuccess(`識別成功！房間代碼: ${code}`)
+  } else {
+    uiStore.showError(roomExpiredReason.value || '掃描到的房間無法加入')
+  }
+  isHandlingScan = false
 }
 
 const closeQRScanner = async () => {
@@ -422,8 +383,9 @@ const unwatchRoom = gameStore.$subscribe((_mutation, state) => {
   }
 })
 
-const checkRoomStatus = async (targetRoomId: string) => {
-  if (!targetRoomId || targetRoomId.length !== 6) return
+// 回傳 true 代表房間存在且可以加入
+const checkRoomStatus = async (targetRoomId: string): Promise<boolean> => {
+  if (!targetRoomId || targetRoomId.length !== 6) return false
   isCheckingRoom.value = true
   roomExpired.value = false
 
@@ -443,6 +405,8 @@ const checkRoomStatus = async (targetRoomId: string) => {
   } finally {
     isCheckingRoom.value = false
   }
+
+  return !roomExpired.value
 }
 
 // 生命週期

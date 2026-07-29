@@ -14,6 +14,13 @@ WORKDIR /app
 COPY kahoot-game/backend/go.mod kahoot-game/backend/go.sum ./
 RUN go mod download
 COPY kahoot-game/backend/ .
+
+# 上版關卡：測試沒過就不給 build。
+# 其中 internal/websocket 是整場遊戲的整合測試（1 房 + 5 玩家 + 5 題，
+# 過程含隨機斷線重連），必須跑到最終分數全部結算出來才算通過，約 3~5 秒。
+# 全部測試都在記憶體模式下跑，不需要 Redis / PostgreSQL / 對外網路。
+RUN CGO_ENABLED=0 go test -timeout 5m ./...
+
 RUN CGO_ENABLED=0 GOOS=linux go build -o main cmd/main.go
 
 # Stage 3: Final lightweight image

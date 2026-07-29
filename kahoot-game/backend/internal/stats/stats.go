@@ -20,8 +20,16 @@ func getenv(k, d string) string {
 	return d
 }
 
+// Disable 關閉上報。整合測試會呼叫它，避免 CI 跑出來的假對局污染正式統計。
+func Disable() {
+	statsURL = ""
+}
+
 // Track 背景上報一筆事件。fire-and-forget，2 秒逾時，任何錯誤吞掉。
 func Track(event string, data map[string]interface{}) {
+	if statsURL == "" {
+		return
+	}
 	go func() {
 		defer func() { _ = recover() }()
 		payload := map[string]interface{}{"game": gameName, "event": event}

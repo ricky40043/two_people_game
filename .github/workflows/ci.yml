@@ -26,10 +26,10 @@ jobs:
       run: go mod verify
 
     - name: Run Tests
-      # Skipping tests that require DB connection if not mocked, 
-      # but ideally we should run all tests. 
-      # Assuming tests are unit tests or have mocks.
-      run: go test -v ./...
+      # 全部測試都不需要外部依賴：服務層傳 nil redis/db 會走記憶體模式。
+      # 其中 internal/websocket 是整場遊戲的整合測試
+      # （1 房 + 5 玩家 + 5 題，過程含隨機斷線重連），約需 3~5 秒。
+      run: go test -v -timeout 5m ./...
 
     - name: Build
       run: go build -v -o app cmd/main.go

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"kahoot-game/internal/models"
@@ -27,6 +28,13 @@ const (
 
 	// 訊息的最大大小
 	maxMessageSize = 512
+)
+
+// 結果畫面 / 跳題畫面的停留時間。
+// 宣告成變數而非常數，是為了讓整合測試能把等待縮短到毫秒級；正式執行時不會被改動。
+var (
+	resultDisplayDelay = 5 * time.Second
+	skipQuestionDelay  = 3 * time.Second
 )
 
 var upgrader = websocket.Upgrader{
@@ -56,6 +64,16 @@ type Client struct {
 	PlayerName string
 	RoomID     string
 	IsHost     bool
+
+	// 保證 send 通道只會被關閉一次（避免廣播失敗與註銷同時關閉造成 panic）
+	closeOnce sync.Once
+}
+
+// closeSend 安全地關閉發送通道，重複呼叫不會 panic
+func (c *Client) closeSend() {
+	c.closeOnce.Do(func() {
+		close(c.send)
+	})
 }
 
 // Message WebSocket 訊息結構
@@ -604,6 +622,11 @@ func (c *Client) handleRejoinRoom(data interface{}) {
 		}
 	}
 
+	// 遊戲已結束時，補上完整結算資料，讓結果頁重新整理後仍能完整顯示
+	if room.Status == models.RoomStatusFinished {
+		rejoinData["finalStats"] = c.hub.gameService.GetFinalRanking(room)
+	}
+
 	// 同步本題所有人作答狀態，避免重連後答題進度條停留在 1/2
 	playerAnswerStatus := make(map[string]interface{})
 	if room.Answers != nil {
@@ -885,6 +908,10 @@ func (c *Client) handleQuestionTimeout() {
 		// 有人答題但主角沒答題，這題無效
 		log.Printf("⚠️ 主角未答題，本題無效，3秒後進入下一題")
 
+		// 立刻離開答題狀態，否則這 3 秒內遲到的答案會被算進「下一題」
+		room.Status = models.RoomStatusShowResult
+		c.hub.roomService.UpdateRoom(room)
+
 		// 廣播主角未答題訊息
 		invalidMsg := Message{
 			Type: "QUESTION_INVALID",
@@ -898,16 +925,14 @@ func (c *Client) handleQuestionTimeout() {
 			c.hub.BroadcastToRoom(c.RoomID, msgBytes)
 		}
 
-		go func() {
-			time.Sleep(3 * time.Second)
-			// 清除答案記錄
-			room.Answers = make(map[string]*models.Answer)
-			c.hub.roomService.UpdateRoom(room)
-			c.handleNextQuestion()
-		}()
+		go c.advanceAfterDelay(skipQuestionDelay)
 	} else {
 		// 沒人答題，直接進入下一題
 		log.Printf("📊 沒有玩家答題，3秒後進入下一題")
+
+		// 同上：先離開答題狀態，避免遲到的答案殘留到下一題
+		room.Status = models.RoomStatusShowResult
+		c.hub.roomService.UpdateRoom(room)
 
 		// 廣播沒人答題訊息
 		noAnswerMsg := Message{
@@ -922,11 +947,31 @@ func (c *Client) handleQuestionTimeout() {
 			c.hub.BroadcastToRoom(c.RoomID, msgBytes)
 		}
 
-		go func() {
-			time.Sleep(3 * time.Second)
-			c.handleNextQuestion()
-		}()
+		go c.advanceAfterDelay(skipQuestionDelay)
 	}
+}
+
+// advanceAfterDelay 等待指定時間後推進下一題
+// 進入下一題前一定會清空 room.Answers，避免上一題遲到 / 殘留的答案被算成下一題的作答。
+// 若房主在等待期間已手動按「繼續」（狀態已不是 show_result），則跳過，避免連跳兩題。
+func (c *Client) advanceAfterDelay(delay time.Duration) {
+	time.Sleep(delay)
+
+	room, err := c.hub.roomService.GetRoom(c.RoomID)
+	if err != nil {
+		log.Printf("獲取房間錯誤: %v", err)
+		return
+	}
+
+	if room.Status != models.RoomStatusShowResult {
+		log.Printf("⏭️ 房間狀態已變更為 %s，跳過自動下一題", room.Status)
+		return
+	}
+
+	room.Answers = make(map[string]*models.Answer)
+	c.hub.roomService.UpdateRoom(room)
+
+	c.handleNextQuestion()
 }
 
 // handleNextQuestion 處理下一題邏輯
@@ -1087,6 +1132,24 @@ func (c *Client) handleSubmitAnswer(data interface{}) {
 		return
 	}
 
+	if room.CurrentQuestion < 1 || room.CurrentQuestion > len(room.Questions) {
+		c.sendError("INVALID_STATE", "目前沒有進行中的題目")
+		return
+	}
+
+	// 確認客戶端作答的題目就是伺服器現在這一題。
+	// 玩家在上一題最後一刻按下的答案，可能因為網路延遲才送達伺服器，
+	// 沒有這道檢查就會被記成「下一題」的作答。
+	currentQuestionID := room.Questions[room.CurrentQuestion-1].ID
+	if rawQuestionID, hasQuestionID := dataMap["questionId"]; hasQuestionID {
+		if qid, ok := rawQuestionID.(float64); ok && int(qid) > 0 && int(qid) != currentQuestionID {
+			log.Printf("⚠️ 拒絕過期答案: 玩家=%s, 送出題目ID=%d, 目前題目ID=%d (第%d題)",
+				c.PlayerName, int(qid), currentQuestionID, room.CurrentQuestion)
+			c.sendError("STALE_ANSWER", "這是上一題的答案，已略過")
+			return
+		}
+	}
+
 	// 提交「2種人」答案
 	answerRecord, err := c.hub.gameService.SubmitTwoTypesAnswer(room, c.ID, answer, timeUsed)
 	if err != nil {
@@ -1203,18 +1266,33 @@ func (c *Client) handleSubmitAnswer(data interface{}) {
 	log.Printf("🎯 玩家 %s 提交答案: %s (耗時: %.2f秒), 已廣播給其他玩家", c.PlayerName, answer, timeUsed)
 }
 
-// checkAllPlayersAnswered 檢查是否所有非主持人玩家都已答題
+// checkAllPlayersAnswered 檢查是否所有「在線的」非主持人玩家都已答題
+// 斷線玩家的答案會在離線處理時被清除，因此也不能列入等待名單，
+// 否則有人閃退後整題會卡住只能等倒數結束。
 func (c *Client) checkAllPlayersAnswered(room *models.Room) bool {
-	totalNonHostPlayers := 0
+	waitingFor := 0
 	for _, p := range room.Players {
-		if !p.IsHost {
-			totalNonHostPlayers++
+		if p.IsHost || !p.IsConnected {
+			continue
 		}
+		waitingFor++
 	}
 	answeredPlayers := len(room.Answers)
 
-	log.Printf("📊 答題進度: %d/%d 非主持人玩家已答題", answeredPlayers, totalNonHostPlayers)
-	return answeredPlayers >= totalNonHostPlayers
+	log.Printf("📊 答題進度: %d/%d 在線玩家已答題", answeredPlayers, waitingFor)
+
+	if waitingFor == 0 {
+		return false
+	}
+
+	// 沒有本題主角的答案就無法計分（例如主角剛好閃退），
+	// 留給倒數結束時的 QUESTION_INVALID 流程處理。
+	if _, hostAnswered := room.Answers[room.CurrentHost]; !hostAnswered {
+		log.Printf("⏳ 本題主角 %s 尚未作答，暫不結算", room.CurrentHost)
+		return false
+	}
+
+	return answeredPlayers >= waitingFor
 }
 
 // calculateAndShowResults 計算並顯示結果
@@ -1268,29 +1346,7 @@ func (c *Client) calculateAndShowResults(room *models.Room) {
 	c.recordQuestionHistory(room)
 
 	// 延遲5秒後自動進入下一題，讓玩家有時間查看分數
-	go func() {
-		time.Sleep(5 * time.Second)
-
-		// 重新獲取房間狀態（避免併發問題）
-		currentRoom, err := c.hub.roomService.GetRoom(c.RoomID)
-		if err != nil {
-			log.Printf("獲取房間錯誤: %v", err)
-			return
-		}
-
-		// 若主持人已按「繼續」手動提前進入下一題，跳過自動觸發
-		if currentRoom.Status != models.RoomStatusShowResult {
-			log.Printf("⏭️ 主持人已手動繼續，跳過自動下一題")
-			return
-		}
-
-		// 清除答案記錄，準備下一題
-		currentRoom.Answers = make(map[string]*models.Answer)
-		c.hub.roomService.UpdateRoom(currentRoom)
-
-		log.Printf("🔄 開始處理下一題邏輯...")
-		c.handleNextQuestion()
-	}()
+	go c.advanceAfterDelay(resultDisplayDelay)
 
 	log.Printf("📊 房間 %s 第 %d 題計分完成，5秒後自動下一題", c.RoomID, room.CurrentQuestion)
 }

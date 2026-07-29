@@ -287,19 +287,26 @@
           </div>
 
           <div class="space-y-3">
-            <router-link 
+            <router-link
               :to="`/results/${roomId}`"
               class="block btn btn-primary"
             >
               查看詳細結果
             </router-link>
-            
-            <router-link 
-              to="/"
-              class="block btn btn-outline"
+
+            <router-link
+              :to="`/lobby/${roomId}`"
+              class="block btn btn-success"
+            >
+              🚪 回到房間大廳
+            </router-link>
+
+            <button
+              @click="returnHome"
+              class="block w-full btn btn-outline"
             >
               返回主頁
-            </router-link>
+            </button>
           </div>
         </div>
       </div>
@@ -398,6 +405,12 @@ const selectAnswer = (answer: string) => {
 
 // getCorrectAnswerText 方法已移除，「2種人」遊戲不需要標準正確答案
 
+// 明確離開這個房間回到首頁（會清掉 session，避免下次連線又被拉回舊房間）
+const returnHome = () => {
+  socketStore.cleanupAfterGame()
+  router.push('/')
+}
+
 const resetQuestionState = () => {
   selectedAnswer.value = ''
   hasAnswered.value = false
@@ -405,18 +418,36 @@ const resetQuestionState = () => {
   scoreGained.value = 0
 }
 
-// 追蹤當前題目編號，用於判斷是否為新題目
-const currentQuestionId = ref<number>(0)
+// 追蹤當前題目，用於判斷是否為新題目
+// 用「題號 + 題目ID」當識別碼，避免只比對 ID 時漏判
+const currentQuestionKey = ref<string>('')
+
+// 從 store 還原本題作答狀態（重連 / 刷新後 local ref 會是空的，
+// 但伺服器在 REJOIN_SUCCESS 會把本題全場作答狀態同步到 store）
+const restoreAnswerStateFromStore = () => {
+  const me = gameStore.currentPlayer?.id
+  if (!me) return
+  const meInRoom = gameStore.currentRoom?.players?.[me]
+  if (meInRoom?.hasAnswered) {
+    hasAnswered.value = true
+    if (meInRoom.currentAnswer) {
+      selectedAnswer.value = meInRoom.currentAnswer
+    }
+    console.log('♻️ 從伺服器狀態還原本題作答:', meInRoom.currentAnswer)
+  }
+}
 
 // 監聽遊戲狀態變化
 const unwatchGameState = gameStore.$subscribe((_mutation, state) => {
   if (state.gameState === 'playing') {
-    // 檢查是否是新題目（題目ID變化）
-    const newQuestionId = gameStore.currentQuestion?.id || 0
-    if (newQuestionId !== currentQuestionId.value) {
-      console.log(`🔄 新題目開始: ${currentQuestionId.value} → ${newQuestionId}`)
-      currentQuestionId.value = newQuestionId
+    // 檢查是否是新題目（題號或題目ID變化）
+    const newQuestionKey = `${gameStore.currentQuestionIndex}-${gameStore.currentQuestion?.id || 0}`
+    if (newQuestionKey !== currentQuestionKey.value) {
+      console.log(`🔄 新題目開始: ${currentQuestionKey.value} → ${newQuestionKey}`)
+      currentQuestionKey.value = newQuestionKey
       resetQuestionState()
+      // 若這次是重連進來的（本題其實已經作答過），把狀態補回來
+      restoreAnswerStateFromStore()
     }
   } else if (state.gameState === 'show_result') {
     showResult.value = true
@@ -459,6 +490,9 @@ onMounted(() => {
 
   // 如果已有房間和玩家信息 → 正常顯示
   if (gameStore.currentRoom && gameStore.currentPlayer) {
+    // 重連後直接掛載到答題畫面時，補回本題已作答狀態
+    currentQuestionKey.value = `${gameStore.currentQuestionIndex}-${gameStore.currentQuestion?.id || 0}`
+    restoreAnswerStateFromStore()
     return
   }
 

@@ -166,9 +166,9 @@
               @click="playAgain"
               class="w-full btn btn-success"
             >
-              🎮 再來一局
+              {{ gameStore.isHost ? '🎮 再來一局（重開這間房）' : '🚪 回到房間大廳' }}
             </button>
-            
+
             <button
               @click="returnHome"
               class="w-full btn btn-outline"

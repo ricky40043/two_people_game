@@ -26,6 +26,34 @@ export const useSocketStore = defineStore('socket', () => {
   const maxReconnectAttempts = 5
   const shouldReconnect = ref(true)
 
+  // 斷線彈窗狀態（重連失敗 / 房間被關閉時顯示，使用者點確認才回首頁）
+  const showDisconnectDialog = ref(false)
+  const disconnectDialogTitle = ref('連線已中斷')
+  const disconnectDialogMessage = ref('')
+
+  const openDisconnectDialog = (title: string, message: string) => {
+    // 已經顯示過就不重複覆蓋，避免訊息被後續事件洗掉
+    if (showDisconnectDialog.value) return
+    shouldReconnect.value = false
+    disconnectDialogTitle.value = title
+    disconnectDialogMessage.value = message
+    showDisconnectDialog.value = true
+    logWarn('WS', '顯示斷線彈窗', { title, message })
+  }
+
+  // 使用者按下「確認」→ 清除所有狀態並回首頁
+  const acknowledgeDisconnect = () => {
+    showDisconnectDialog.value = false
+    localStorage.removeItem('ricky_game_session')
+    gameStore.resetGame()
+    if (socket.value) {
+      try { socket.value.close() } catch { /* ignore */ }
+      socket.value = null
+    }
+    isConnected.value = false
+    window.location.href = '/'
+  }
+
   // 重連彈窗狀態
   const showRejoinDialog = ref(false)
   const rejoinDialogData = ref<{
@@ -134,7 +162,10 @@ export const useSocketStore = defineStore('socket', () => {
         }, delay)
       } else {
         logError('WS', '達到最大重連次數，停止重連')
-        uiStore.showError('無法重新連線，請檢查網路後重新整理頁面')
+        openDisconnectDialog(
+          '連線已斷開',
+          '與伺服器的連線已中斷且無法自動恢復（可能是閒置太久或網路不穩）。點擊「確認」回到首頁重新開始。'
+        )
       }
     }
 
@@ -251,34 +282,29 @@ export const useSocketStore = defineStore('socket', () => {
     }
 
     if (!data.exists) {
-      // 房間不存在 → 清除 session 並跳回首頁
-      logInfo('ROOM', '房間不存在，自動踢回首頁')
-      localStorage.removeItem('ricky_game_session')
-      gameStore.resetGame()
-      uiStore.showWarning('房間不存在或已過期關閉')
-      window.location.href = '/'
+      // 房間不存在 → 提示後由使用者確認回首頁
+      logInfo('ROOM', '房間不存在')
+      openDisconnectDialog('房間不存在', '這個房間不存在或已經過期關閉，點擊「確認」回到首頁。')
       return
     }
 
-    if (data.status === 'finished' || data.status === 'abandoned') {
-      // 房間已結束 → 清除 session 並跳回首頁
-      logInfo('ROOM', '房間已結束，自動踢回首頁')
-      localStorage.removeItem('ricky_game_session')
-      gameStore.resetGame()
-      uiStore.showInfo('房間遊戲已結束')
-      window.location.href = '/'
+    if (data.status === 'abandoned') {
+      logInfo('ROOM', '房間已廢棄')
+      openDisconnectDialog('房間已關閉', '這個房間已經結束並被關閉，點擊「確認」回到首頁。')
       return
     }
 
     if (!data.playerExists) {
-      // 玩家不在房間裡了 → 清除 session 並跳回首頁
-      logInfo('ROOM', '玩家不在房間中，自動踢回首頁')
-      localStorage.removeItem('ricky_game_session')
-      gameStore.resetGame()
-      uiStore.showWarning('您已不在該房間中')
-      window.location.href = '/'
+      // 玩家不在房間裡了 → 提示後由使用者確認回首頁
+      logInfo('ROOM', '玩家不在房間中')
+      openDisconnectDialog('已離開房間', '您已不在這個房間中，點擊「確認」回到首頁。')
       return
     }
+
+    // 注意：status === 'finished' 也要重連。
+    // 這樣結算畫面重新整理、或按「再來一局」時才能回到原本的房間，
+    // 而不是被踢回首頁被迫重開一間新房。
+
 
     // 房間存在且玩家在裡面 → 自動 REJOIN（不彈 dialog）
     logInfo('ROOM', '自動重連中...', {
@@ -917,9 +943,9 @@ export const useSocketStore = defineStore('socket', () => {
 
     console.log('🏁 === 前端遊戲結束處理完成 ===')
 
-    // 遊戲結束，清除 session 讓玩家可以自由操作
-    localStorage.removeItem('ricky_game_session')
-    logDebug('GAME', '已清除 session，等待玩家操作')
+    // 保留 session：結算畫面重新整理、或按「再來一局」時才回得去原本的房間。
+    // 只在使用者明確按「返回主頁」(cleanupAfterGame) 或房間被清掉時才清除。
+    logDebug('GAME', '遊戲結束，保留 session 以便回到房間')
   }
 
   const handleError = (data: any) => {
@@ -934,10 +960,10 @@ export const useSocketStore = defineStore('socket', () => {
 
   const handleRoomClosed = (data: any) => {
     logWarn('ROOM', '房間已關閉', data)
-    uiStore.showWarning(data.reason || '房間已關閉')
-    localStorage.removeItem('ricky_game_session')
-    gameStore.resetGame()
-    window.location.href = '/' // 強制回到首頁
+    openDisconnectDialog(
+      '房間已關閉',
+      data.reason || '此房間已被關閉或過期清理，點擊「確認」回到首頁。'
+    )
   }
 
   const handleRejoinSuccess = (data: any) => {
@@ -1010,7 +1036,10 @@ export const useSocketStore = defineStore('socket', () => {
     }
 
     // 恢復分數
-    if (data.scores && Array.isArray(data.scores)) {
+    if (data.finalStats && Array.isArray(data.finalStats)) {
+      // 遊戲已結束：直接沿用結算格式，結果頁重新整理後才會完整
+      handleGameFinished({ finalStats: data.finalStats, totalQuestions: data.totalQuestions })
+    } else if (data.scores && Array.isArray(data.scores)) {
       gameStore.updateScores(data.scores)
     }
 
@@ -1224,6 +1253,9 @@ export const useSocketStore = defineStore('socket', () => {
     })
 
     try {
+      // 0. 使用者明確要離開這個房間，清掉 session 避免下次連線又自動重連回去
+      localStorage.removeItem('ricky_game_session')
+
       // 1. 斷開 WebSocket 連接（但保持重連能力）
       if (socket.value) {
         // 暫時禁用重連，避免清理過程中的自動重連
@@ -1318,6 +1350,9 @@ export const useSocketStore = defineStore('socket', () => {
     socket, // 導出 socket 以便外部監聽
     showRejoinDialog,
     rejoinDialogData,
+    showDisconnectDialog,
+    disconnectDialogTitle,
+    disconnectDialogMessage,
 
     // 動作
     connect,
@@ -1335,6 +1370,7 @@ export const useSocketStore = defineStore('socket', () => {
     forceEndGame,
     cleanupAfterGame,
     confirmRejoin,
-    cancelRejoin
+    cancelRejoin,
+    acknowledgeDisconnect
   }
 })

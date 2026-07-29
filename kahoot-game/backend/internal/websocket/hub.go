@@ -121,9 +121,17 @@ func (h *Hub) unregisterClient(client *Client) {
 	defer h.mutex.Unlock()
 
 	if _, ok := h.clients[client]; ok {
+		// 0. 若同一個 playerID 已經有新的連線（玩家閃退後重連），
+		//    這裡收到的是「舊連線」的延遲註銷，不能再跑離開邏輯，
+		//    否則會把剛回來的玩家標記為離線、並刪掉他本題的答案。
+		superseded := h.hasNewerClient(client)
+
 		// 1. 先處理離開邏輯（在關閉通道前）
-		if client.RoomID != "" {
+		if client.RoomID != "" && !superseded {
 			h.handlePlayerLeaveInternal(client)
+		}
+		if superseded {
+			log.Printf("♻️ 舊連線 %s 已被新連線取代，跳過離開處理", client.ID)
 		}
 
 		// 2. 從特定房間移除（而不是遍歷所有房間）
@@ -135,12 +143,27 @@ func (h *Hub) unregisterClient(client *Client) {
 		delete(h.clients, client)
 
 		// 4. 最後關閉通道
-		close(client.send)
+		client.closeSend()
 
 		log.Printf("❌ 客戶端已註銷: %s (剩餘: %d)", client.ID, len(h.clients))
 	} else {
 		log.Printf("⚠️ 嘗試註銷不存在的客戶端: %s", client.ID)
 	}
+}
+
+// hasNewerClient 檢查同房間內是否已有另一條使用相同 playerID 的連線
+// （玩家閃退 / 換網路後重連時，舊的 WebSocket 可能過 60 秒才被偵測到斷開）
+// 呼叫端必須已持有 h.mutex
+func (h *Hub) hasNewerClient(client *Client) bool {
+	if client.RoomID == "" || client.ID == "" {
+		return false
+	}
+	for other := range h.rooms[client.RoomID] {
+		if other != client && other.ID == client.ID {
+			return true
+		}
+	}
+	return false
 }
 
 // addClientToRoom 將客戶端加入房間
@@ -180,8 +203,9 @@ func (h *Hub) broadcastToAll(message []byte) {
 		select {
 		case client.send <- message:
 		default:
-			delete(h.clients, client)
-			close(client.send)
+			// 通道已滿代表對方（很可能是已閃退的舊連線）沒有在讀取訊息。
+			// 這裡只持有讀鎖，不能改動 map，交由 readPump 結束時的註銷流程清理。
+			log.Printf("⚠️ 全域廣播失敗，客戶端 %s 發送通道已滿", client.ID)
 		}
 	}
 }
@@ -204,8 +228,8 @@ func (h *Hub) broadcastToRoom(roomID string, message []byte) {
 			select {
 			case client.send <- message:
 			default:
-				delete(roomClients, client)
-				close(client.send)
+				// 同上：只持有讀鎖，不在這裡刪除／關閉，避免併發 map 寫入與重複 close
+				log.Printf("⚠️ 房間 %s 廣播失敗，客戶端 %s 發送通道已滿", roomID, client.ID)
 			}
 		}
 	}
