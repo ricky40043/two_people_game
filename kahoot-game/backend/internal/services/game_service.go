@@ -19,6 +19,30 @@ type GameService struct {
 	redisClient *redis.Client
 }
 
+const MaxQuestionRerolls = 3
+
+// RerollError 是換題流程可被前端辨識的業務錯誤。
+type RerollError struct {
+	Code    string
+	Message string
+}
+
+func (e *RerollError) Error() string {
+	return e.Message
+}
+
+// RerollResult 包含換題後需要廣播給房間的狀態。
+type RerollResult struct {
+	Question          models.Question
+	QuestionVersion   int
+	QuestionTimeLimit int
+	TimeLeft          int
+	RemainingRerolls  int
+	RerolledBy        string
+	ServerTime        time.Time
+	EndsAt            time.Time
+}
+
 // NewGameService 創建遊戲服務
 func NewGameService(db *sql.DB, redisClient *redis.Client) *GameService {
 	return &GameService{
@@ -135,12 +159,19 @@ func (s *GameService) ResetRoomToLobby(room *models.Room) {
 	room.Answers = make(map[string]*models.Answer)
 	room.GameHistory = make([]models.QuestionHistory, 0)
 	room.Questions = make([]models.Question, 0)
+	room.QuestionVersion = 0
+	room.QuestionStartedAt = nil
+	room.QuestionEndsAt = nil
+	room.TimeLeft = 0
+	room.UsedQuestionIDs = nil
+	room.DiscardedQuestionIDs = nil
 
 	// 重置所有玩家的分數與統計
 	for _, player := range room.Players {
 		player.Score = 0
 		player.CorrectAnswers = 0
 		player.TimesAsHost = 0
+		player.RerollUsed = 0
 	}
 
 	log.Printf("🔄 [房間重置] 房間 %s 已重置回到大廳狀態 (人數: %d)", room.ID, len(room.Players))
@@ -161,11 +192,19 @@ func (s *GameService) StartTwoTypesGame(room *models.Room) error {
 	// 重置遊戲狀態
 	room.CurrentQuestion = 1
 	room.Answers = make(map[string]*models.Answer)
+	room.QuestionVersion = 1
+	room.QuestionStartedAt = nil
+	room.QuestionEndsAt = nil
+	room.TimeLeft = room.QuestionTimeLimit
+	room.UsedQuestionIDs = make(map[int]bool)
+	room.DiscardedQuestionIDs = make([]int, 0)
 
 	// 重置所有玩家分數與主角擔任次數
 	for _, player := range room.Players {
 		player.Score = 0
+		player.CorrectAnswers = 0
 		player.TimesAsHost = 0
+		player.RerollUsed = 0
 	}
 
 	// 設定第一題的主角
@@ -174,6 +213,130 @@ func (s *GameService) StartTwoTypesGame(room *models.Room) error {
 	room.Status = models.RoomStatusQuestionDisplay
 
 	return nil
+}
+
+// InitializeCurrentQuestion starts the server-side clock for the current question.
+// It is intentionally separate from selecting a question so a reroll can keep the
+// same CurrentQuestion number while replacing only the question and deadline.
+func (s *GameService) InitializeCurrentQuestion(room *models.Room) error {
+	if room.CurrentQuestion < 1 || room.CurrentQuestion > len(room.Questions) {
+		return fmt.Errorf("目前沒有進行中的題目")
+	}
+
+	if room.QuestionVersion < 1 {
+		room.QuestionVersion = 1
+	}
+	if room.UsedQuestionIDs == nil {
+		room.UsedQuestionIDs = make(map[int]bool)
+	}
+	room.UsedQuestionIDs[room.Questions[room.CurrentQuestion-1].ID] = true
+
+	now := time.Now()
+	endsAt := now.Add(time.Duration(room.QuestionTimeLimit) * time.Second)
+	room.QuestionStartedAt = &now
+	room.QuestionEndsAt = &endsAt
+	room.TimeLeft = room.QuestionTimeLimit
+	room.Status = models.RoomStatusQuestionDisplay
+	return nil
+}
+
+// RerollQuestion validates and atomically replaces the current question. The
+// caller must protect the room with RoomService.WithRoomLock.
+func (s *GameService) RerollQuestion(room *models.Room, playerID string, questionID, questionVersion int) (*RerollResult, error) {
+	if room == nil {
+		return nil, &RerollError{Code: "ROOM_NOT_FOUND", Message: "房間不存在"}
+	}
+	if room.Status != models.RoomStatusQuestionDisplay {
+		return nil, &RerollError{Code: "GAME_NOT_IN_PROGRESS", Message: "目前不是可換題的答題階段"}
+	}
+	if room.CurrentQuestion < 1 || room.CurrentQuestion > len(room.Questions) {
+		return nil, &RerollError{Code: "QUESTION_ALREADY_FINISHED", Message: "目前題目已結束"}
+	}
+	player, exists := room.Players[playerID]
+	if !exists || !player.IsConnected {
+		return nil, &RerollError{Code: "PLAYER_NOT_FOUND", Message: "玩家不存在或目前不在線"}
+	}
+	if room.CurrentHost != playerID {
+		return nil, &RerollError{Code: "NOT_CURRENT_HOST", Message: "只有目前題目的主角可以換題"}
+	}
+	if player.RerollUsed >= MaxQuestionRerolls {
+		return nil, &RerollError{Code: "REROLL_LIMIT_REACHED", Message: "本場遊戲的換題次數已用完"}
+	}
+
+	currentQuestion := room.Questions[room.CurrentQuestion-1]
+	if currentQuestion.ID != questionID || room.QuestionVersion != questionVersion {
+		return nil, &RerollError{Code: "STALE_QUESTION", Message: "題目已更新，請重新整理後再試"}
+	}
+	if room.QuestionEndsAt != nil && !time.Now().Before(*room.QuestionEndsAt) {
+		return nil, &RerollError{Code: "QUESTION_ALREADY_FINISHED", Message: "答題時間已結束，無法換題"}
+	}
+
+	replacement, err := s.selectRerollQuestion(room)
+	if err != nil {
+		return nil, err
+	}
+
+	if room.UsedQuestionIDs == nil {
+		room.UsedQuestionIDs = make(map[int]bool)
+	}
+	room.DiscardedQuestionIDs = append(room.DiscardedQuestionIDs, currentQuestion.ID)
+	room.Questions[room.CurrentQuestion-1] = replacement
+	room.UsedQuestionIDs[replacement.ID] = true
+	room.Answers = make(map[string]*models.Answer)
+	room.QuestionVersion++
+	player.RerollUsed++
+
+	now := time.Now()
+	endsAt := now.Add(time.Duration(room.QuestionTimeLimit) * time.Second)
+	room.QuestionStartedAt = &now
+	room.QuestionEndsAt = &endsAt
+	room.TimeLeft = room.QuestionTimeLimit
+
+	return &RerollResult{
+		Question:          replacement,
+		QuestionVersion:   room.QuestionVersion,
+		QuestionTimeLimit: room.QuestionTimeLimit,
+		TimeLeft:          room.TimeLeft,
+		RemainingRerolls:  MaxQuestionRerolls - player.RerollUsed,
+		RerolledBy:        playerID,
+		ServerTime:        now,
+		EndsAt:            endsAt,
+	}, nil
+}
+
+func (s *GameService) selectRerollQuestion(room *models.Room) (models.Question, error) {
+	currentQuestionID := room.Questions[room.CurrentQuestion-1].ID
+	discarded := make(map[int]bool, len(room.DiscardedQuestionIDs))
+	for _, id := range room.DiscardedQuestionIDs {
+		discarded[id] = true
+	}
+	used := room.UsedQuestionIDs
+	scheduled := make(map[int]bool, len(room.Questions))
+	for _, question := range room.Questions {
+		scheduled[question.ID] = true
+	}
+
+	choose := func(allowUsed bool) (models.Question, bool) {
+		allQuestions := ConvertToGameQuestions(GetTwoTypesQuestions())
+		for _, question := range allQuestions {
+			if question.ID == currentQuestionID || discarded[question.ID] || scheduled[question.ID] {
+				continue
+			}
+			if !allowUsed && used[question.ID] {
+				continue
+			}
+			return question, true
+		}
+		return models.Question{}, false
+	}
+
+	if question, ok := choose(false); ok {
+		return question, nil
+	}
+	if question, ok := choose(true); ok {
+		return question, nil
+	}
+	return models.Question{}, &RerollError{Code: "NO_AVAILABLE_QUESTION", Message: "題庫中沒有可替換的題目"}
 }
 
 // SelectNextHost 選擇下一個主角（嚴格公平輪播，保證每個人都輪過一次後才進入下一輪）
@@ -401,6 +564,10 @@ func (s *GameService) NextTwoTypesQuestion(room *models.Room) {
 	if room.CurrentQuestion > room.TotalQuestions {
 		room.Status = models.RoomStatusFinished
 	} else {
+		room.QuestionVersion++
+		room.QuestionStartedAt = nil
+		room.QuestionEndsAt = nil
+		room.TimeLeft = 0
 		room.Status = models.RoomStatusQuestionDisplay
 	}
 }

@@ -4,6 +4,8 @@ export interface Player {
   name: string
   roomId: string
   score: number
+  correctAnswers?: number
+  rerollUsed?: number
   isHost: boolean
   isConnected: boolean
   lastActivity: Date
@@ -25,6 +27,8 @@ export interface Room {
   currentHost: string
   nextHostOverride?: string
   timeLeft: number
+  questionVersion?: number
+  questionEndsAt?: string
   questions: Question[]
   createdAt: Date
   startedAt?: Date
@@ -119,6 +123,7 @@ export interface JoinRoomRequest {
 export interface SubmitAnswerRequest {
   roomId: string
   questionId: number
+  questionVersion?: number
   answer: string
   timeUsed: number
 }
@@ -143,7 +148,7 @@ export interface RoomCreatedResponse {
 
 // 遊戲事件類型
 export interface GameEvent {
-  type: 'ROOM_CREATED' | 'PLAYER_JOINED' | 'PLAYER_LEFT' | 'GAME_STARTED' | 'NEW_QUESTION' | 'QUESTION_FINISHED' | 'SCORES_UPDATE' | 'GAME_FINISHED' | 'ERROR'
+  type: 'ROOM_CREATED' | 'PLAYER_JOINED' | 'PLAYER_LEFT' | 'GAME_STARTED' | 'NEW_QUESTION' | 'QUESTION_REROLLED' | 'REROLL_QUESTION_FAILED' | 'QUESTION_FINISHED' | 'SCORES_UPDATE' | 'GAME_FINISHED' | 'ERROR'
   data: any
 }
 
@@ -227,6 +232,12 @@ export type ErrorCode =
   | 'INVALID_ANSWER'
   | 'PLAYER_NOT_FOUND'
   | 'PERMISSION_DENIED'
+  | 'GAME_NOT_IN_PROGRESS'
+  | 'NOT_CURRENT_HOST'
+  | 'REROLL_LIMIT_REACHED'
+  | 'STALE_QUESTION'
+  | 'QUESTION_ALREADY_FINISHED'
+  | 'NO_AVAILABLE_QUESTION'
   | 'NETWORK_ERROR'
   | 'SERVER_ERROR'
 

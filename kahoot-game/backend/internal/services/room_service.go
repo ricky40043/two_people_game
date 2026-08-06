@@ -25,6 +25,8 @@ type RoomService struct {
 	// 測試模式用的記憶體存儲
 	memoryRooms map[string]*models.Room
 	memoryMutex sync.RWMutex
+	roomLocks   map[string]*sync.Mutex
+	roomLocksMu sync.Mutex
 }
 
 // NewRoomService 創建房間服務
@@ -34,7 +36,69 @@ func NewRoomService(redisClient *redis.Client, gameService *GameService) *RoomSe
 		gameService: gameService,
 		keys:        database.NewRedisKeys(),
 		memoryRooms: make(map[string]*models.Room),
+		roomLocks:   make(map[string]*sync.Mutex),
 	}
+}
+
+// WithRoomLock serializes a complete read-modify-write operation for one room.
+// The local mutex protects in-process handlers; Redis also receives a short-lived
+// lock so two backend instances do not overwrite each other's room snapshots.
+func (s *RoomService) WithRoomLock(roomID string, fn func(*models.Room) error) error {
+	s.roomLocksMu.Lock()
+	roomLock, exists := s.roomLocks[roomID]
+	if !exists {
+		roomLock = &sync.Mutex{}
+		s.roomLocks[roomID] = roomLock
+	}
+	s.roomLocksMu.Unlock()
+
+	roomLock.Lock()
+	defer roomLock.Unlock()
+
+	var unlockRedis func()
+	if s.redisClient != nil {
+		ctx := context.Background()
+		lockKey := fmt.Sprintf("room-lock:%s", roomID)
+		lockToken := uuid.New().String()
+		acquired := false
+		for attempt := 0; attempt < 120; attempt++ {
+			ok, err := s.redisClient.SetNX(ctx, lockKey, lockToken, 10*time.Second).Result()
+			if err != nil {
+				return fmt.Errorf("取得房間鎖失敗: %w", err)
+			}
+			if ok {
+				acquired = true
+				break
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		if !acquired {
+			return fmt.Errorf("取得房間鎖逾時")
+		}
+
+		unlockRedis = func() {
+			const releaseScript = `
+				if redis.call("GET", KEYS[1]) == ARGV[1] then
+					return redis.call("DEL", KEYS[1])
+				end
+				return 0
+			`
+			if err := s.redisClient.Eval(ctx, releaseScript, []string{lockKey}, lockToken).Err(); err != nil {
+				log.Printf("⚠️ 釋放房間鎖失敗: room=%s error=%v", roomID, err)
+			}
+		}
+		defer unlockRedis()
+	}
+
+	room, err := s.GetRoom(roomID)
+	if err != nil {
+		return err
+	}
+	if err := fn(room); err != nil {
+		return err
+	}
+	room.LastActivity = time.Now()
+	return s.updateRoom(room)
 }
 
 // CreateRoom 創建房間

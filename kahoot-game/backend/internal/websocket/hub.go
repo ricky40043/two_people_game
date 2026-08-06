@@ -39,6 +39,10 @@ type Hub struct {
 
 	// 互斥鎖
 	mutex sync.RWMutex
+
+	// 每個房間同一題只允許一個倒數 goroutine。
+	timerMutex  sync.Mutex
+	activeTimer map[string]int
 }
 
 // RoomMessage 房間訊息結構
@@ -59,6 +63,25 @@ func NewHub(roomService *services.RoomService, gameService *services.GameService
 		roomService:   roomService,
 		gameService:   gameService,
 		frontendURL:   strings.TrimSuffix(frontendURL, "/"),
+		activeTimer:   make(map[string]int),
+	}
+}
+
+func (h *Hub) claimQuestionTimer(roomID string, questionVersion int) bool {
+	h.timerMutex.Lock()
+	defer h.timerMutex.Unlock()
+	if activeVersion, exists := h.activeTimer[roomID]; exists && activeVersion == questionVersion {
+		return false
+	}
+	h.activeTimer[roomID] = questionVersion
+	return true
+}
+
+func (h *Hub) releaseQuestionTimer(roomID string, questionVersion int) {
+	h.timerMutex.Lock()
+	defer h.timerMutex.Unlock()
+	if h.activeTimer[roomID] == questionVersion {
+		delete(h.activeTimer, roomID)
 	}
 }
 
@@ -288,12 +311,22 @@ func (h *Hub) handlePlayerLeaveInternal(client *Client) {
 	if client.RoomID == "" || client.PlayerName == "" {
 		return
 	}
+	roomID := client.RoomID
+	if err := h.roomService.WithRoomLock(roomID, func(_ *models.Room) error {
+		h.handlePlayerLeaveInternalUnlocked(client)
+		return nil
+	}); err != nil {
+		log.Printf("❌ 玩家離開房間鎖定失敗: room=%s error=%v", roomID, err)
+	}
+}
+
+func (h *Hub) handlePlayerLeaveInternalUnlocked(client *Client) {
 
 	log.Printf("👋 處理玩家離開: %s 從房間 %s", client.PlayerName, client.RoomID)
 
 	roomClients := h.rooms[client.RoomID]
 
-	// 獲取房間資料
+	// 獲取房間資料（呼叫端已持有房間鎖）
 	room, err := h.roomService.GetRoom(client.RoomID)
 	if err != nil {
 		log.Printf("❌ 獲取房間資訊失敗: %v", err)
@@ -308,7 +341,6 @@ func (h *Hub) handlePlayerLeaveInternal(client *Client) {
 		} else {
 			log.Printf("👋 玩家 %s 標記為離線（保留資料以供重連）", client.PlayerName)
 		}
-		h.roomService.UpdateRoom(room)
 	} else {
 		log.Printf("⚠️ 找不到玩家 %s", client.ID)
 	}
@@ -364,10 +396,6 @@ func (h *Hub) handlePlayerLeaveInternal(client *Client) {
 		}
 	} else {
 		room.NextHostOverride = ""
-	}
-
-	if err := h.roomService.UpdateRoom(room); err != nil {
-		log.Printf("❌ 更新房間資料失敗: %v", err)
 	}
 
 	leaveData := map[string]interface{}{

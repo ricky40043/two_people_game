@@ -206,6 +206,12 @@ export const useSocketStore = defineStore('socket', () => {
       case 'NEW_QUESTION':
         handleNewQuestion(message.data)
         break
+      case 'QUESTION_REROLLED':
+        handleQuestionRerolled(message.data)
+        break
+      case 'REROLL_QUESTION_FAILED':
+        handleRerollQuestionFailed(message.data)
+        break
       case 'TIMER_UPDATE':
         handleTimerUpdate(message.data)
         break
@@ -405,6 +411,7 @@ export const useSocketStore = defineStore('socket', () => {
       score: 0,
       isHost: true,
       isConnected: true,
+      rerollUsed: 0,
       lastActivity: new Date()
     }
 
@@ -444,6 +451,7 @@ export const useSocketStore = defineStore('socket', () => {
           score: player.score || 0,
           isHost: player.isHost || player.id === data.clientId,
           isConnected: true,
+          rerollUsed: player.rerollUsed || 0,
           lastActivity: new Date()
         })
       })
@@ -487,6 +495,7 @@ export const useSocketStore = defineStore('socket', () => {
         score: 0,
         isHost: false,
         isConnected: true,
+        rerollUsed: data.rerollUsed || 0,
         lastActivity: new Date()
       })
 
@@ -525,6 +534,7 @@ export const useSocketStore = defineStore('socket', () => {
           score: player.score || 0,
           isHost: player.isHost || false,
           isConnected: true,
+          rerollUsed: player.rerollUsed || 0,
           lastActivity: new Date()
         })
 
@@ -547,6 +557,7 @@ export const useSocketStore = defineStore('socket', () => {
           score: 0,
           isHost: false,
           isConnected: true,
+          rerollUsed: 0,
           lastActivity: new Date()
         })
 
@@ -577,6 +588,7 @@ export const useSocketStore = defineStore('socket', () => {
           score: player.score || 0,
           isHost: player.isHost || false,
           isConnected: player.isConnected ?? true,
+          rerollUsed: player.rerollUsed || 0,
           lastActivity: player.lastActivity ? new Date(player.lastActivity) : new Date()
         })
       })
@@ -644,6 +656,10 @@ export const useSocketStore = defineStore('socket', () => {
     // 先設置索引，再設置題目內容
     gameStore.setCurrentQuestionIndex(questionIndex)
 
+    if (data.questionVersion !== undefined) {
+      gameStore.setQuestionVersion(data.questionVersion)
+    }
+
     // 設置當前題目
     gameStore.setCurrentQuestion({
       id: data.questionId,
@@ -658,7 +674,7 @@ export const useSocketStore = defineStore('socket', () => {
 
     // 設置其他遊戲狀態
     gameStore.setCurrentHost(data.hostPlayer)
-    gameStore.updateTimeLeft(data.timeLimit)
+    gameStore.updateQuestionTiming(data.timeLeft ?? data.timeLimit, data.endsAt)
     gameStore.setGameState('playing')
 
     const currentQuestion = gameStore.currentQuestion
@@ -683,7 +699,59 @@ export const useSocketStore = defineStore('socket', () => {
     uiStore.showInfo(`第 ${questionNumber} 題 - 主角：${hostPlayerName}`)
   }
 
+  const handleQuestionRerolled = (data: any) => {
+    if (data.roomId && gameStore.currentRoom?.id && data.roomId !== gameStore.currentRoom.id) return
+    const question = data.question || {}
+    handleNewQuestion({
+      roomId: data.roomId,
+      questionId: question.id || data.questionId,
+      questionText: question.questionText,
+      optionA: question.optionA,
+      optionB: question.optionB,
+      questionIndex: gameStore.currentQuestionIndex,
+      currentQuestion: gameStore.currentQuestionIndex + 1,
+      totalQuestions: gameStore.totalQuestions,
+      hostPlayer: data.currentHost,
+      timeLimit: data.questionTimeLimit,
+      timeLeft: data.timeLeft,
+      questionVersion: data.questionVersion,
+      endsAt: data.endsAt
+    })
+
+    if (Array.isArray(data.players)) {
+      data.players.forEach((player: any) => {
+        gameStore.addPlayer({
+          id: player.id,
+          name: player.name,
+          roomId: data.roomId,
+          score: player.score || 0,
+          isHost: player.isHost || false,
+          isConnected: player.isConnected ?? true,
+          rerollUsed: player.rerollUsed || 0,
+          lastActivity: player.lastActivity ? new Date(player.lastActivity) : new Date()
+        })
+      })
+    }
+    if (data.rerolledBy && data.remainingRerolls !== undefined) {
+      gameStore.updatePlayerRerollUsed(data.rerolledBy, 3 - data.remainingRerolls)
+    }
+    gameStore.setRerolling(false)
+    uiStore.showSuccess('主角已更換題目，作答時間重新開始')
+  }
+
+  const handleRerollQuestionFailed = (data: any) => {
+    gameStore.setRerolling(false)
+    uiStore.showError(data.message || '換題失敗，請稍後再試')
+  }
+
   const handleTimerUpdate = (data: any) => {
+    if (data.questionVersion !== undefined && data.questionVersion !== gameStore.questionVersion) {
+      logDebug('TIMER', '忽略舊題計時事件', {
+        receivedVersion: data.questionVersion,
+        currentVersion: gameStore.questionVersion
+      })
+      return
+    }
     const timestamp = Date.now()
 
     if (!window.timerEvents) {
@@ -719,10 +787,11 @@ export const useSocketStore = defineStore('socket', () => {
       recentEventCount: recentEvents.length
     })
 
-    gameStore.updateTimeLeft(data.timeLeft)
+    gameStore.updateQuestionTiming(data.timeLeft, data.endsAt)
   }
 
   const handleQuestionTimeout = (data: any) => {
+    if (data.questionVersion !== undefined && data.questionVersion !== gameStore.questionVersion) return
     logInfo('QUESTION', '答題時間結束', data)
     gameStore.updateTimeLeft(0)
     uiStore.showWarning('時間到！')
@@ -984,6 +1053,8 @@ export const useSocketStore = defineStore('socket', () => {
       questionTimeLimit: 30,
       currentHost: data.currentHost || '',
       timeLeft: data.timeLeft || 0,
+      questionVersion: data.questionVersion || 0,
+      questionEndsAt: data.questionEndsAt,
       questions: [],
       createdAt: new Date()
     })
@@ -996,6 +1067,7 @@ export const useSocketStore = defineStore('socket', () => {
       score: data.score || 0,
       isHost: isHost,
       isConnected: true,
+      rerollUsed: data.rerollUsed || 0,
       lastActivity: new Date()
     })
 
@@ -1045,7 +1117,7 @@ export const useSocketStore = defineStore('socket', () => {
 
     // 恢復剩餘時間（避免重連後按鈕因 timeLeft=0 被 disable）
     if (data.timeLeft !== undefined && data.timeLeft > 0) {
-      gameStore.updateTimeLeft(data.timeLeft)
+      gameStore.updateQuestionTiming(data.timeLeft, data.questionEndsAt)
     }
 
     // 恢復全場所有人本題答題狀態 (避免 1/2 答題進度卡死)
@@ -1186,16 +1258,26 @@ export const useSocketStore = defineStore('socket', () => {
   }
 
   // 提交答案
-  const submitAnswer = (roomId: string, questionId: number, answer: string, timeUsed: number) => {
-    logDebug('WS_TX', '送出 SUBMIT_ANSWER', { roomId, questionId, answer, timeUsed })
+  const submitAnswer = (roomId: string, questionId: number, questionVersion: number, answer: string, timeUsed: number) => {
+    logDebug('WS_TX', '送出 SUBMIT_ANSWER', { roomId, questionId, questionVersion, answer, timeUsed })
     sendMessage({
       type: 'SUBMIT_ANSWER',
       data: {
         roomId,
         questionId,
+        questionVersion,
         answer,
         timeUsed
       }
+    })
+  }
+
+  const rerollQuestion = (roomId: string, questionId: number, questionVersion: number) => {
+    gameStore.setRerolling(true)
+    logInfo('WS_TX', '送出 REROLL_QUESTION', { roomId, questionId, questionVersion })
+    sendMessage({
+      type: 'REROLL_QUESTION',
+      data: { roomId, questionId, questionVersion }
     })
   }
 
@@ -1368,6 +1450,7 @@ export const useSocketStore = defineStore('socket', () => {
     sendPing,
     continueGame,
     forceEndGame,
+    rerollQuestion,
     cleanupAfterGame,
     confirmRejoin,
     cancelRejoin,

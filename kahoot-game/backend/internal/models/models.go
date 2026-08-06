@@ -12,6 +12,7 @@ type Player struct {
 	Score          int         `json:"score"`
 	CorrectAnswers int         `json:"correctAnswers"` // 累計答對次數
 	TimesAsHost    int         `json:"timesAsHost"`    // 當前遊戲中擔任主角的次數
+	RerollUsed     int         `json:"rerollUsed"`     // 本場遊戲已使用的換題次數
 	IsHost         bool        `json:"isHost"`         // 是否為房間主持人
 	IsConnected    bool        `json:"isConnected"`
 	LastActivity   time.Time   `json:"lastActivity"`
@@ -20,26 +21,31 @@ type Player struct {
 
 // Room 房間結構
 type Room struct {
-	ID                string             `json:"id"`
-	HostID            string             `json:"hostId"`
-	HostName          string             `json:"hostName"`
-	HostToken         string             `json:"hostToken"`         // 主持人身份驗證 token
-	HostConnected     bool               `json:"hostConnected"`     // 主持人是否在線
-	Status            RoomStatus         `json:"status"`
-	Players           map[string]*Player `json:"players"`
-	CurrentQuestion   int                `json:"currentQuestion"`
-	TotalQuestions    int                `json:"totalQuestions"`
-	QuestionTimeLimit int                `json:"questionTimeLimit"`
-	CurrentHost       string             `json:"currentHost"` // 當前題目的主角玩家
-	NextHostOverride  string             `json:"nextHostOverride,omitempty"`
-	TimeLeft          int                `json:"timeLeft"`
-	Questions         []Question         `json:"questions"`
-	Answers           map[string]*Answer `json:"answers"`     // 當前題目的玩家答案
-	GameHistory       []QuestionHistory  `json:"gameHistory"` // 所有題目的答題記錄
-	CreatedAt         time.Time          `json:"createdAt"`
-	StartedAt         *time.Time         `json:"startedAt,omitempty"`
-	FinishedAt        *time.Time         `json:"finishedAt,omitempty"`
-	LastActivity      time.Time          `json:"lastActivity"` // 最後活動時間，用於清理
+	ID                   string             `json:"id"`
+	HostID               string             `json:"hostId"`
+	HostName             string             `json:"hostName"`
+	HostToken            string             `json:"hostToken"`     // 主持人身份驗證 token
+	HostConnected        bool               `json:"hostConnected"` // 主持人是否在線
+	Status               RoomStatus         `json:"status"`
+	Players              map[string]*Player `json:"players"`
+	CurrentQuestion      int                `json:"currentQuestion"`
+	TotalQuestions       int                `json:"totalQuestions"`
+	QuestionTimeLimit    int                `json:"questionTimeLimit"`
+	CurrentHost          string             `json:"currentHost"` // 當前題目的主角玩家
+	NextHostOverride     string             `json:"nextHostOverride,omitempty"`
+	TimeLeft             int                `json:"timeLeft"`
+	QuestionVersion      int                `json:"questionVersion"`
+	QuestionStartedAt    *time.Time         `json:"questionStartedAt,omitempty"`
+	QuestionEndsAt       *time.Time         `json:"questionEndsAt,omitempty"`
+	Questions            []Question         `json:"questions"`
+	UsedQuestionIDs      map[int]bool       `json:"usedQuestionIds,omitempty"`
+	DiscardedQuestionIDs []int              `json:"discardedQuestionIds,omitempty"`
+	Answers              map[string]*Answer `json:"answers"`     // 當前題目的玩家答案
+	GameHistory          []QuestionHistory  `json:"gameHistory"` // 所有題目的答題記錄
+	CreatedAt            time.Time          `json:"createdAt"`
+	StartedAt            *time.Time         `json:"startedAt,omitempty"`
+	FinishedAt           *time.Time         `json:"finishedAt,omitempty"`
+	LastActivity         time.Time          `json:"lastActivity"` // 最後活動時間，用於清理
 }
 
 // RoomStatus 房間狀態枚舉

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -205,6 +206,8 @@ func (c *Client) handleMessage(msg *Message) {
 		c.handleForceEndGame(msg.Data)
 	case "SUBMIT_ANSWER":
 		c.handleSubmitAnswer(msg.Data)
+	case "REROLL_QUESTION":
+		c.handleRerollQuestion(msg.Data)
 	case "LEAVE_ROOM":
 		c.handleLeaveRoom(msg.Data)
 	case "UPDATE_ROOM_SETTINGS":
@@ -342,7 +345,7 @@ func (c *Client) handleCreateRoom(data interface{}) {
 		Data: map[string]interface{}{
 			"roomId":            room.ID,
 			"hostName":          hostName,
-			"clientId":          c.ID, // 返回 clientId 作為 playerId
+			"clientId":          c.ID,           // 返回 clientId 作為 playerId
 			"hostToken":         room.HostToken, // 主持人身份驗證 token
 			"totalQuestions":    totalQuestions,
 			"questionTimeLimit": questionTimeLimit,
@@ -471,12 +474,12 @@ func (c *Client) handleJoinAsHost(data interface{}) {
 	// 將主持人加入 room.Players（讓重連/離線偵測可以運作）
 	if _, exists := room.Players[c.ID]; !exists {
 		hostPlayer := &models.Player{
-			ID:          c.ID,
-			Name:        hostName,
-			RoomID:      roomID,
-			Score:       0,
-			IsHost:      true,
-			IsConnected: true,
+			ID:           c.ID,
+			Name:         hostName,
+			RoomID:       roomID,
+			Score:        0,
+			IsHost:       true,
+			IsConnected:  true,
 			LastActivity: time.Now(),
 		}
 		room.AddPlayer(hostPlayer)
@@ -515,8 +518,29 @@ func (c *Client) handleJoinAsHost(data interface{}) {
 	log.Printf("🎯 主持人 %s 通過 WebSocket 加入房間 %s", hostName, roomID)
 }
 
-// handleRejoinRoom 處理玩家重新加入房間
+// handleRejoinRoom serializes reconnection with other room state changes.
 func (c *Client) handleRejoinRoom(data interface{}) {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		c.handleRejoinRoomUnlocked(data)
+		return
+	}
+	roomID, _ := dataMap["roomId"].(string)
+	if roomID == "" {
+		c.handleRejoinRoomUnlocked(data)
+		return
+	}
+	if err := c.hub.roomService.WithRoomLock(roomID, func(_ *models.Room) error {
+		c.handleRejoinRoomUnlocked(data)
+		return nil
+	}); err != nil {
+		log.Printf("❌ 重連房間鎖定失敗: room=%s error=%v", roomID, err)
+		c.sendError("ROOM_NOT_FOUND", "房間不存在或目前無法重連")
+	}
+}
+
+// handleRejoinRoomUnlocked 處理玩家重新加入房間（呼叫端需持有房間鎖）
+func (c *Client) handleRejoinRoomUnlocked(data interface{}) {
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
 		c.sendError("INVALID_DATA", "重連資料格式錯誤")
@@ -607,11 +631,22 @@ func (c *Client) handleRejoinRoom(data interface{}) {
 		"hostId":                 room.HostID,
 		"hostName":               room.HostName,
 		"timeLeft":               room.TimeLeft,
+		"questionVersion":        room.QuestionVersion,
+		"questionEndsAt":         room.QuestionEndsAt,
+		"rerollUsed":             player.RerollUsed,
+		"remainingRerolls":       services.MaxQuestionRerolls - player.RerollUsed,
 		"message":                "重新連線成功！",
 	}
 
 	// 遊戲進行中時，發送當前題目的完整資訊（room.CurrentQuestion 是 1-based）
 	if isGameInProgress && room.CurrentQuestion >= 1 && room.CurrentQuestion <= len(room.Questions) {
+		if room.QuestionEndsAt != nil {
+			remaining := int(math.Ceil(time.Until(*room.QuestionEndsAt).Seconds()))
+			if remaining < 0 {
+				remaining = 0
+			}
+			rejoinData["timeLeft"] = remaining
+		}
 		q := room.Questions[room.CurrentQuestion-1]
 		rejoinData["currentQuestionData"] = map[string]interface{}{
 			"id":           q.ID,
@@ -778,6 +813,13 @@ func (c *Client) sendFirstQuestion() {
 	}
 
 	currentQuestion := room.Questions[room.CurrentQuestion-1]
+	if err := c.hub.gameService.InitializeCurrentQuestion(room); err != nil {
+		log.Printf("❌ 初始化第一題計時失敗: %v", err)
+		return
+	}
+	if err := c.hub.roomService.UpdateRoom(room); err != nil {
+		log.Printf("⚠️ 儲存第一題計時失敗: %v", err)
+	}
 
 	// 發送新題目訊息
 	newQuestionMsg := Message{
@@ -792,6 +834,10 @@ func (c *Client) sendFirstQuestion() {
 			"totalQuestions":  room.TotalQuestions,
 			"hostPlayer":      room.CurrentHost,
 			"timeLimit":       room.QuestionTimeLimit,
+			"questionVersion": room.QuestionVersion,
+			"timeLeft":        room.TimeLeft,
+			"serverTime":      time.Now(),
+			"endsAt":          room.QuestionEndsAt,
 			"question":        currentQuestion.QuestionText, // 前端可能使用這個字段
 			"roomId":          room.ID,                      // 幫助客戶端驗證訊息所屬房間
 		},
@@ -815,36 +861,50 @@ func (c *Client) startQuestionTimer(timeLimit int) {
 	if err != nil {
 		return
 	}
+	scheduledQuestionVersion := room.QuestionVersion
+	if !c.hub.claimQuestionTimer(c.RoomID, scheduledQuestionVersion) {
+		log.Printf("⏭️ 跳過重複計時器: 房間=%s 版本=%d", c.RoomID, scheduledQuestionVersion)
+		return
+	}
+	defer c.hub.releaseQuestionTimer(c.RoomID, scheduledQuestionVersion)
 
 	log.Printf("⏰ 計時器啟動: 觸發者=%s, 是否主持人=%t, 房間=%s, 題目=%d", c.PlayerName, c.IsHost, c.RoomID, room.CurrentQuestion)
 
-	// 設置計時器標識，防止重複啟動
-	timerKey := fmt.Sprintf("timer_%s_%d", c.RoomID, room.CurrentQuestion)
+	for {
+		var remaining int
+		var questionIndex int
+		var endsAt *time.Time
+		err = c.hub.roomService.WithRoomLock(c.RoomID, func(room *models.Room) error {
+			// 檢查房間狀態，如果已經不在答題狀態或版本已變更就停止計時。
+			if room.Status != models.RoomStatusQuestionDisplay || room.QuestionVersion != scheduledQuestionVersion {
+				return fmt.Errorf("stale question timer")
+			}
 
-	for i := timeLimit; i >= 0; i-- {
-		// 檢查房間狀態，如果已經不在答題狀態就停止計時
-		room, err = c.hub.roomService.GetRoom(c.RoomID)
-		if err != nil || room.Status != models.RoomStatusQuestionDisplay {
-			log.Printf("⏹️ 計時器停止: 房間狀態改變或錯誤")
+			remaining = room.TimeLeft
+			if room.QuestionEndsAt != nil {
+				remaining = int(math.Ceil(time.Until(*room.QuestionEndsAt).Seconds()))
+				if remaining < 0 {
+					remaining = 0
+				}
+			}
+			room.TimeLeft = remaining
+			questionIndex = room.CurrentQuestion
+			endsAt = room.QuestionEndsAt
+			return nil
+		})
+		if err != nil {
+			log.Printf("⏹️ 計時器停止: 房間狀態改變、版本更新或鎖定失敗")
 			return
 		}
-
-		// 檢查是否有新題目開始（避免舊計時器繼續）
-		currentTimerKey := fmt.Sprintf("timer_%s_%d", c.RoomID, room.CurrentQuestion)
-		if currentTimerKey != timerKey {
-			log.Printf("⏹️ 計時器停止: 新題目已開始")
-			return
-		}
-
-		// 更新房間剩餘時間（供重連玩家使用）
-		room.TimeLeft = i
 
 		// 廣播倒數時間
 		timerMsg := Message{
 			Type: "TIMER_UPDATE",
 			Data: map[string]interface{}{
-				"timeLeft":      i,
-				"questionIndex": room.CurrentQuestion,
+				"timeLeft":        remaining,
+				"questionIndex":   questionIndex,
+				"questionVersion": scheduledQuestionVersion,
+				"endsAt":          endsAt,
 			},
 		}
 
@@ -852,11 +912,11 @@ func (c *Client) startQuestionTimer(timeLimit int) {
 			c.hub.BroadcastToRoom(c.RoomID, msgBytes)
 		}
 
-		log.Printf("⏱️ 房間 %s 第 %d 題倒數: %d 秒", c.RoomID, room.CurrentQuestion, i)
+		log.Printf("⏱️ 房間 %s 第 %d 題倒數: %d 秒 (版本=%d)", c.RoomID, questionIndex, remaining, scheduledQuestionVersion)
 
 		// 如果時間到了，處理答題結束
-		if i == 0 {
-			c.handleQuestionTimeout()
+		if remaining == 0 {
+			c.handleQuestionTimeout(scheduledQuestionVersion)
 			return
 		}
 
@@ -865,9 +925,25 @@ func (c *Client) startQuestionTimer(timeLimit int) {
 }
 
 // handleQuestionTimeout 處理答題時間結束
-func (c *Client) handleQuestionTimeout() {
+func (c *Client) handleQuestionTimeout(questionVersion int) {
+	if err := c.hub.roomService.WithRoomLock(c.RoomID, func(_ *models.Room) error {
+		c.handleQuestionTimeoutUnlocked(questionVersion)
+		return nil
+	}); err != nil {
+		log.Printf("❌ 題目結算鎖定失敗: room=%s error=%v", c.RoomID, err)
+	}
+}
+
+func (c *Client) handleQuestionTimeoutUnlocked(questionVersion int) {
 	room, err := c.hub.roomService.GetRoom(c.RoomID)
 	if err != nil {
+		return
+	}
+	if room.QuestionVersion != questionVersion || room.Status != models.RoomStatusQuestionDisplay {
+		log.Printf("⏹️ 忽略過期計時器結算: room=%s version=%d current=%d", c.RoomID, questionVersion, room.QuestionVersion)
+		return
+	}
+	if room.QuestionEndsAt != nil && time.Now().Before(*room.QuestionEndsAt) {
 		return
 	}
 
@@ -957,25 +1033,39 @@ func (c *Client) handleQuestionTimeout() {
 func (c *Client) advanceAfterDelay(delay time.Duration) {
 	time.Sleep(delay)
 
-	room, err := c.hub.roomService.GetRoom(c.RoomID)
+	var shouldAdvance bool
+	err := c.hub.roomService.WithRoomLock(c.RoomID, func(room *models.Room) error {
+		if room.Status != models.RoomStatusShowResult {
+			log.Printf("⏭️ 房間狀態已變更為 %s，跳過自動下一題", room.Status)
+			return nil
+		}
+		room.Answers = make(map[string]*models.Answer)
+		shouldAdvance = true
+		return nil
+	})
 	if err != nil {
-		log.Printf("獲取房間錯誤: %v", err)
+		log.Printf("❌ 自動進入下一題鎖定失敗: %v", err)
 		return
 	}
-
-	if room.Status != models.RoomStatusShowResult {
-		log.Printf("⏭️ 房間狀態已變更為 %s，跳過自動下一題", room.Status)
+	if !shouldAdvance {
 		return
 	}
-
-	room.Answers = make(map[string]*models.Answer)
-	c.hub.roomService.UpdateRoom(room)
 
 	c.handleNextQuestion()
 }
 
-// handleNextQuestion 處理下一題邏輯
+// handleNextQuestion serializes the transition to the next question.
 func (c *Client) handleNextQuestion() {
+	if err := c.hub.roomService.WithRoomLock(c.RoomID, func(_ *models.Room) error {
+		c.handleNextQuestionUnlocked()
+		return nil
+	}); err != nil {
+		log.Printf("❌ 下一題鎖定失敗: room=%s error=%v", c.RoomID, err)
+	}
+}
+
+// handleNextQuestionUnlocked 處理下一題邏輯（呼叫端需持有房間鎖）
+func (c *Client) handleNextQuestionUnlocked() {
 	room, err := c.hub.roomService.GetRoom(c.RoomID)
 	if err != nil {
 		log.Printf("獲取房間錯誤: %v", err)
@@ -1068,6 +1158,13 @@ func (c *Client) sendNextQuestion() {
 	}
 
 	currentQuestion := room.Questions[room.CurrentQuestion-1]
+	if err := c.hub.gameService.InitializeCurrentQuestion(room); err != nil {
+		log.Printf("❌ 初始化下一題計時失敗: %v", err)
+		return
+	}
+	if err := c.hub.roomService.UpdateRoom(room); err != nil {
+		log.Printf("⚠️ 儲存下一題計時失敗: %v", err)
+	}
 	log.Printf("📝 準備發送第 %d 題: %s", room.CurrentQuestion, currentQuestion.QuestionText)
 
 	// 確保房間狀態正確
@@ -1086,6 +1183,10 @@ func (c *Client) sendNextQuestion() {
 			"totalQuestions":  room.TotalQuestions,
 			"hostPlayer":      room.CurrentHost,
 			"timeLimit":       room.QuestionTimeLimit,
+			"questionVersion": room.QuestionVersion,
+			"timeLeft":        room.TimeLeft,
+			"serverTime":      time.Now(),
+			"endsAt":          room.QuestionEndsAt,
 			"question":        currentQuestion.QuestionText, // 前端可能使用這個字段
 			"roomId":          room.ID,                      // 幫助客戶端驗證訊息所屬房間
 		},
@@ -1102,8 +1203,115 @@ func (c *Client) sendNextQuestion() {
 	go c.startQuestionTimer(room.QuestionTimeLimit)
 }
 
-// handleSubmitAnswer 處理提交答案
+// handleRerollQuestion handles the current host's once-per-request question replacement.
+func (c *Client) handleRerollQuestion(data interface{}) {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		c.sendRerollError("INVALID_DATA", "換題資料格式錯誤")
+		return
+	}
+	roomID, _ := dataMap["roomId"].(string)
+	if roomID == "" {
+		roomID = c.RoomID
+	}
+	questionID, questionIDOK := numberFromMessage(dataMap["questionId"])
+	questionVersion, versionOK := numberFromMessage(dataMap["questionVersion"])
+	if roomID == "" || !questionIDOK || !versionOK {
+		c.sendRerollError("INVALID_DATA", "換題資料缺少房間、題目或版本")
+		return
+	}
+
+	var result *services.RerollResult
+	err := c.hub.roomService.WithRoomLock(roomID, func(room *models.Room) error {
+		if roomID != c.RoomID {
+			return &services.RerollError{Code: "PLAYER_NOT_FOUND", Message: "玩家不在此房間"}
+		}
+		var err error
+		result, err = c.hub.gameService.RerollQuestion(room, c.ID, questionID, questionVersion)
+		return err
+	})
+	if err != nil {
+		if rerollErr, ok := err.(*services.RerollError); ok {
+			log.Printf("⚠️ 換題失敗: room=%s player=%s code=%s", roomID, c.ID, rerollErr.Code)
+			c.sendRerollError(rerollErr.Code, rerollErr.Message)
+			return
+		}
+		log.Printf("❌ 換題流程失敗: room=%s player=%s error=%v", roomID, c.ID, err)
+		c.sendRerollError("SERVER_ERROR", "換題失敗，請稍後再試")
+		return
+	}
+	if result == nil {
+		c.sendRerollError("SERVER_ERROR", "換題失敗，伺服器沒有產生新題目")
+		return
+	}
+
+	room, roomErr := c.hub.roomService.GetRoom(roomID)
+	if roomErr != nil {
+		c.sendRerollError("ROOM_NOT_FOUND", "房間不存在")
+		return
+	}
+	message := Message{
+		Type: "QUESTION_REROLLED",
+		Data: map[string]interface{}{
+			"roomId":            roomID,
+			"question":          result.Question,
+			"questionId":        result.Question.ID,
+			"currentHost":       room.CurrentHost,
+			"questionVersion":   result.QuestionVersion,
+			"questionTimeLimit": result.QuestionTimeLimit,
+			"timeLeft":          result.TimeLeft,
+			"remainingRerolls":  result.RemainingRerolls,
+			"rerolledBy":        result.RerolledBy,
+			"serverTime":        result.ServerTime,
+			"endsAt":            result.EndsAt,
+			"players":           room.GetPlayerList(),
+		},
+	}
+	if msgBytes, marshalErr := json.Marshal(message); marshalErr == nil {
+		c.hub.BroadcastToRoom(roomID, msgBytes)
+	}
+
+	log.Printf("🔄 主角 %s 更換房間 %s 的題目: question=%d version=%d remaining=%d", c.ID, roomID, result.Question.ID, result.QuestionVersion, result.RemainingRerolls)
+	go c.startQuestionTimer(result.QuestionTimeLimit)
+}
+
+func numberFromMessage(value interface{}) (int, bool) {
+	switch number := value.(type) {
+	case float64:
+		return int(number), number == float64(int(number))
+	case int:
+		return number, true
+	case int32:
+		return int(number), true
+	case int64:
+		return int(number), true
+	default:
+		return 0, false
+	}
+}
+
+func (c *Client) sendRerollError(code, message string) {
+	c.sendMessage(&Message{
+		Type: "REROLL_QUESTION_FAILED",
+		Data: map[string]interface{}{
+			"code":    code,
+			"message": message,
+		},
+	})
+}
+
+// handleSubmitAnswer serializes answer writes with rerolls and transitions.
 func (c *Client) handleSubmitAnswer(data interface{}) {
+	if err := c.hub.roomService.WithRoomLock(c.RoomID, func(_ *models.Room) error {
+		c.handleSubmitAnswerUnlocked(data)
+		return nil
+	}); err != nil {
+		log.Printf("❌ 答案寫入鎖定失敗: room=%s error=%v", c.RoomID, err)
+	}
+}
+
+// handleSubmitAnswerUnlocked 處理提交答案（呼叫端需持有房間鎖）
+func (c *Client) handleSubmitAnswerUnlocked(data interface{}) {
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
 		c.sendError("INVALID_DATA", "提交答案資料格式錯誤")
@@ -1136,16 +1344,26 @@ func (c *Client) handleSubmitAnswer(data interface{}) {
 		c.sendError("INVALID_STATE", "目前沒有進行中的題目")
 		return
 	}
+	if room.QuestionEndsAt != nil && !time.Now().Before(*room.QuestionEndsAt) {
+		c.sendError("QUESTION_ALREADY_FINISHED", "答題時間已結束")
+		return
+	}
 
-	// 確認客戶端作答的題目就是伺服器現在這一題。
+	// 確認客戶端作答的題目與版本就是伺服器現在這一題。
 	// 玩家在上一題最後一刻按下的答案，可能因為網路延遲才送達伺服器，
 	// 沒有這道檢查就會被記成「下一題」的作答。
 	currentQuestionID := room.Questions[room.CurrentQuestion-1].ID
+	if rawQuestionVersion, hasQuestionVersion := dataMap["questionVersion"]; hasQuestionVersion {
+		if version, ok := numberFromMessage(rawQuestionVersion); !ok || version != room.QuestionVersion {
+			c.sendError("STALE_QUESTION", "這是過期題目的答案，已略過")
+			return
+		}
+	}
 	if rawQuestionID, hasQuestionID := dataMap["questionId"]; hasQuestionID {
 		if qid, ok := rawQuestionID.(float64); ok && int(qid) > 0 && int(qid) != currentQuestionID {
 			log.Printf("⚠️ 拒絕過期答案: 玩家=%s, 送出題目ID=%d, 目前題目ID=%d (第%d題)",
 				c.PlayerName, int(qid), currentQuestionID, room.CurrentQuestion)
-			c.sendError("STALE_ANSWER", "這是上一題的答案，已略過")
+			c.sendError("STALE_QUESTION", "這是過期題目的答案，已略過")
 			return
 		}
 	}
@@ -1414,6 +1632,15 @@ func (c *Client) getHostAnswer(room *models.Room) string {
 // handleForceEndGame 處理強制結束遊戲 (例如主持人手動結束)
 // handleContinueGame 主持人手動繼續（結果畫面 → 下一題，或跳過剩餘倒數）
 func (c *Client) handleContinueGame() {
+	if err := c.hub.roomService.WithRoomLock(c.RoomID, func(_ *models.Room) error {
+		c.handleContinueGameUnlocked()
+		return nil
+	}); err != nil {
+		log.Printf("❌ 繼續遊戲鎖定失敗: room=%s error=%v", c.RoomID, err)
+	}
+}
+
+func (c *Client) handleContinueGameUnlocked() {
 	if !c.IsHost {
 		c.sendError("PERMISSION_DENIED", "只有主持人可以繼續遊戲")
 		return
@@ -1433,7 +1660,7 @@ func (c *Client) handleContinueGame() {
 		room.Answers = make(map[string]*models.Answer)
 		room.Status = models.RoomStatusQuestionDisplay // 提前改狀態，讓 goroutine 跳過
 		c.hub.roomService.UpdateRoom(room)
-		c.handleNextQuestion()
+		c.handleNextQuestionUnlocked()
 	case models.RoomStatusQuestionDisplay:
 		// 題目還在倒數：強制結算
 		c.calculateAndShowResults(room)
@@ -1478,7 +1705,7 @@ func (c *Client) handleForceEndGame(data interface{}) {
 
 	// 發送最終結果給所有人
 	finalStats := c.hub.gameService.GetFinalRanking(room)
-	
+
 	gameEndMsg := Message{
 		Type: "GAME_FINISHED",
 		Data: map[string]interface{}{

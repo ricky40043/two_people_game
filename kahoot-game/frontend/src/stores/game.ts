@@ -12,6 +12,9 @@ export const useGameStore = defineStore('game', () => {
   const scores = ref<ScoreInfo[]>([])
   const timeLeft = ref(0)
   const currentHost = ref<string | null>(null)
+  const questionVersion = ref(0)
+  const questionEndsAt = ref<string | null>(null)
+  const isRerolling = ref(false)
   const isHost = ref(false)
   const answeredCount = ref(0)   // 本題作答人數
   const correctCount = ref(0)   // 本題答對人數
@@ -147,6 +150,36 @@ export const useGameStore = defineStore('game', () => {
     currentHost.value = hostId
   }
 
+  const setQuestionVersion = (version: number) => {
+    questionVersion.value = version
+    if (currentRoom.value) {
+      currentRoom.value.questionVersion = version
+    }
+  }
+
+  const updateQuestionTiming = (remaining: number, endsAt?: string | null) => {
+    timeLeft.value = remaining
+    questionEndsAt.value = endsAt || null
+    if (currentRoom.value) {
+      currentRoom.value.timeLeft = remaining
+      currentRoom.value.questionEndsAt = endsAt || undefined
+    }
+  }
+
+  const setRerolling = (value: boolean) => {
+    isRerolling.value = value
+  }
+
+  const updatePlayerRerollUsed = (playerId: string, rerollUsed: number) => {
+    const player = currentRoom.value?.players[playerId]
+    if (player) {
+      player.rerollUsed = rerollUsed
+    }
+    if (currentPlayer.value?.id === playerId) {
+      currentPlayer.value.rerollUsed = rerollUsed
+    }
+  }
+
   const resetGame = () => {
     currentRoom.value = null
     currentPlayer.value = null
@@ -156,6 +189,9 @@ export const useGameStore = defineStore('game', () => {
     scores.value = []
     timeLeft.value = 0
     currentHost.value = null
+    questionVersion.value = 0
+    questionEndsAt.value = null
+    isRerolling.value = false
     isHost.value = false
   }
 
@@ -216,6 +252,8 @@ export const useGameStore = defineStore('game', () => {
       })
       console.log('🔄 重置所有玩家答題狀態')
     }
+    answeredCount.value = 0
+    correctCount.value = 0
   }
 
   // 計算已答題玩家數量
@@ -234,6 +272,9 @@ export const useGameStore = defineStore('game', () => {
     scores,
     timeLeft,
     currentHost,
+    questionVersion,
+    questionEndsAt,
+    isRerolling,
     isHost,
 
     // 計算屬性
@@ -265,6 +306,10 @@ export const useGameStore = defineStore('game', () => {
     updateScores,
     updateTimeLeft,
     setCurrentHost,
+    setQuestionVersion,
+    updateQuestionTiming,
+    setRerolling,
+    updatePlayerRerollUsed,
     resetGame,
     updatePlayerScore,
     getPlayerById,

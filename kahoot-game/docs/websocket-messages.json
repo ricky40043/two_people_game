@@ -48,6 +48,7 @@
         "data": {
           "roomId": "string",
           "questionId": "number",
+          "questionVersion": "number",
           "answer": "string (A/B/C/D)",
           "timeUsed": "number (用時秒數)"
         },
@@ -56,8 +57,25 @@
           "data": {
             "roomId": "ABC123",
             "questionId": 1,
+            "questionVersion": 1,
             "answer": "A",
             "timeUsed": 5.2
+          }
+        }
+      },
+      "REROLL_QUESTION": {
+        "description": "目前題目的主角更換題目（每位玩家每場最多3次）",
+        "data": {
+          "roomId": "string",
+          "questionId": "number",
+          "questionVersion": "number"
+        },
+        "example": {
+          "type": "REROLL_QUESTION",
+          "data": {
+            "roomId": "ABC123",
+            "questionId": 1,
+            "questionVersion": 1
           }
         }
       },
@@ -102,7 +120,32 @@
           "hostPlayerName": "string",
           "timeLimit": "number",
           "currentQuestion": "number",
-          "totalQuestions": "number"
+          "totalQuestions": "number",
+          "questionVersion": "number",
+          "timeLeft": "number",
+          "endsAt": "string"
+        }
+      },
+      "QUESTION_REROLLED": {
+        "description": "主角更換題目後廣播的新題目與新倒數",
+        "data": {
+          "roomId": "string",
+          "question": "object",
+          "currentHost": "string",
+          "questionVersion": "number",
+          "questionTimeLimit": "number",
+          "timeLeft": "number",
+          "remainingRerolls": "number",
+          "rerolledBy": "string",
+          "serverTime": "string",
+          "endsAt": "string"
+        }
+      },
+      "REROLL_QUESTION_FAILED": {
+        "description": "主角換題失敗（只回傳給操作者）",
+        "data": {
+          "code": "string",
+          "message": "string"
         }
       },
       "ANSWER_RECEIVED": {

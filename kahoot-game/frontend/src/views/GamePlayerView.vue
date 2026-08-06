@@ -91,6 +91,20 @@
           <span class="text-2xl mr-2">👑</span>
           <span class="font-bold text-lg">您是本題主角！其他人要猜您的選擇</span>
         </div>
+        <div class="mt-3 flex flex-col items-center gap-2">
+          <button
+            v-if="rerollRemaining > 0"
+            data-testid="reroll-question-button"
+            type="button"
+            :disabled="gameStore.isRerolling || gameStore.timeLeft <= 0"
+            class="rounded-full bg-slate-900 px-5 py-2 text-sm font-bold text-white shadow-lg transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+            @click="showRerollConfirm = true"
+          >
+            <span v-if="gameStore.isRerolling">換題中...</span>
+            <span v-else>🔄 換題目（剩餘 {{ rerollRemaining }} 次）</span>
+          </button>
+          <span v-else class="text-sm font-semibold text-black/70">換題次數已用完</span>
+        </div>
       </div>
       
       <!-- 非主角提示 -->
@@ -311,6 +325,44 @@
         </div>
       </div>
     </div>
+
+    <!-- 主角換題確認視窗 -->
+    <div
+      v-if="showRerollConfirm"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      @click.self="showRerollConfirm = false"
+    >
+      <div class="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+        <div class="mb-5 text-center">
+          <div class="mb-2 text-4xl">🔄</div>
+          <h3 class="mb-3 text-xl font-bold text-gray-800">確定要更換題目嗎？</h3>
+          <p class="text-sm leading-relaxed text-gray-600">
+            換題後，目前所有玩家在這一題的作答將被清除，<br />
+            並且答題時間會重新開始。
+          </p>
+          <p class="mt-3 font-semibold text-purple-700">本場剩餘換題次數：{{ rerollRemaining }} 次</p>
+        </div>
+        <div class="flex gap-3">
+          <button
+            type="button"
+            class="flex-1 rounded-xl bg-gray-200 px-4 py-3 font-bold text-gray-700 hover:bg-gray-300 disabled:opacity-60"
+            :disabled="gameStore.isRerolling"
+            @click="showRerollConfirm = false"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            class="flex-1 rounded-xl bg-purple-600 px-4 py-3 font-bold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="gameStore.isRerolling || !canReroll"
+            @click="confirmReroll"
+          >
+            <span v-if="gameStore.isRerolling">換題中...</span>
+            <span v-else>確定換題</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -337,6 +389,7 @@ const selectedAnswer = ref<string>('')
 const hasAnswered = ref(false)
 const showResult = ref(false)
 const scoreGained = ref(0)
+const showRerollConfirm = ref(false)
 
 // 計算屬性
 const roomId = computed(() => props.roomId || route.params.roomId as string)
@@ -364,6 +417,18 @@ const isMyTurn = computed(() => {
   return gameStore.currentHost === gameStore.currentPlayer?.id
 })
 
+const rerollRemaining = computed(() => {
+  return Math.max(0, 3 - (gameStore.currentPlayer?.rerollUsed || 0))
+})
+
+const canReroll = computed(() => {
+  return isMyTurn.value &&
+    gameStore.gameState === 'playing' &&
+    rerollRemaining.value > 0 &&
+    !!gameStore.currentQuestion &&
+    gameStore.timeLeft > 0
+})
+
 const answeredPlayersCount = computed(() => {
   // 使用 GameStore 中的計算屬性
   return gameStore.answeredPlayersCount
@@ -389,6 +454,7 @@ const selectAnswer = (answer: string) => {
   socketStore.submitAnswer(
     roomId.value,
     gameStore.currentQuestion?.id || 0,
+    gameStore.questionVersion,
     answer,
     timeUsed
   )
@@ -401,6 +467,15 @@ const selectAnswer = (answer: string) => {
   }
   
   console.log(`✏️ 提交答案: ${answer}, 耗時: ${timeUsed}秒, 是否主角: ${isMyTurn.value}`)
+}
+
+const confirmReroll = () => {
+  if (!canReroll.value || gameStore.isRerolling) return
+  socketStore.rerollQuestion(
+    roomId.value,
+    gameStore.currentQuestion?.id || 0,
+    gameStore.questionVersion
+  )
 }
 
 // getCorrectAnswerText 方法已移除，「2種人」遊戲不需要標準正確答案
@@ -446,6 +521,7 @@ const unwatchGameState = gameStore.$subscribe((_mutation, state) => {
       console.log(`🔄 新題目開始: ${currentQuestionKey.value} → ${newQuestionKey}`)
       currentQuestionKey.value = newQuestionKey
       resetQuestionState()
+      showRerollConfirm.value = false
       // 若這次是重連進來的（本題其實已經作答過），把狀態補回來
       restoreAnswerStateFromStore()
     }
